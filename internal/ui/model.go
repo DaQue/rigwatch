@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alpindale/ssh-dashboard/internal"
+	"github.com/allisonhere/rigwatch/internal"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -22,27 +22,41 @@ const (
 )
 
 type Model struct {
-	screen         Screen
-	hosts          []internal.SSHHost
-	selectedHosts  []internal.SSHHost
-	currentHostIdx int
-	list           list.Model
-	spinner        spinner.Model
-	clients        map[string]*internal.SSHClient
-	sysInfos       map[string]*internal.SystemInfo
-	lastUpdates    map[string]time.Time
-	updateInterval time.Duration
-	failedHosts    map[string]error
-	width          int
-	height         int
-	sshOnExit      string
-	updateInfo     internal.UpdateInfo
+	screen          Screen
+	hosts           []internal.SSHHost
+	selectedHosts   []internal.SSHHost
+	currentHostIdx  int
+	list            list.Model
+	spinner         spinner.Model
+	clients         map[string]*internal.SSHClient
+	sysInfos        map[string]*internal.SystemInfo
+	lastUpdates     map[string]time.Time
+	updateInterval  time.Duration
+	failedHosts     map[string]error
+	width           int
+	height          int
+	sshOnExit       string
+	updateInfo      internal.UpdateInfo
+	animationFrame  int
+	metricHistories map[string]metricHistory
+}
+
+const metricHistoryLimit = 40
+
+type metricHistory struct {
+	CPU     []float64
+	GPU     []float64
+	VRAM    []float64
+	RAM     []float64
+	Temp    []float64
+	Network []float64
 }
 
 type TickMsg time.Time
 
-type UpdateCheckMsg internal.UpdateInfo
+type AnimationTickMsg time.Time
 
+type UpdateCheckMsg internal.UpdateInfo
 type SystemInfoMsg struct {
 	hostName string
 	info     *internal.SystemInfo
@@ -69,6 +83,9 @@ func (h hostItem) Title() string {
 	return prefix + h.host.Name
 }
 func (h hostItem) Description() string {
+	if h.host.Local {
+		return "  local machine"
+	}
 	if h.host.Hostname != "" {
 		return fmt.Sprintf("  %s@%s:%s", h.host.User, censorHostname(h.host.Hostname), h.host.Port)
 	}
@@ -134,15 +151,16 @@ func InitialModel(hosts []internal.SSHHost, updateInterval time.Duration) Model 
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 
 	return Model{
-		screen:         ScreenHostList,
-		hosts:          hosts,
-		list:           l,
-		spinner:        s,
-		clients:        make(map[string]*internal.SSHClient),
-		sysInfos:       make(map[string]*internal.SystemInfo),
-		lastUpdates:    make(map[string]time.Time),
-		failedHosts:    make(map[string]error),
-		updateInterval: updateInterval,
+		screen:          ScreenHostList,
+		hosts:           hosts,
+		list:            l,
+		spinner:         s,
+		clients:         make(map[string]*internal.SSHClient),
+		sysInfos:        make(map[string]*internal.SystemInfo),
+		lastUpdates:     make(map[string]time.Time),
+		failedHosts:     make(map[string]error),
+		metricHistories: make(map[string]metricHistory),
+		updateInterval:  updateInterval,
 	}
 }
 
@@ -172,17 +190,18 @@ func InitialModelWithHosts(allHosts []internal.SSHHost, selectedHosts []internal
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 
 	return Model{
-		screen:         ScreenConnecting,
-		hosts:          allHosts,
-		selectedHosts:  selectedHosts,
-		currentHostIdx: 0,
-		list:           l,
-		spinner:        s,
-		clients:        make(map[string]*internal.SSHClient),
-		sysInfos:       make(map[string]*internal.SystemInfo),
-		lastUpdates:    make(map[string]time.Time),
-		failedHosts:    make(map[string]error),
-		updateInterval: updateInterval,
+		screen:          ScreenConnecting,
+		hosts:           allHosts,
+		selectedHosts:   selectedHosts,
+		currentHostIdx:  0,
+		list:            l,
+		spinner:         s,
+		clients:         make(map[string]*internal.SSHClient),
+		sysInfos:        make(map[string]*internal.SystemInfo),
+		lastUpdates:     make(map[string]time.Time),
+		failedHosts:     make(map[string]error),
+		metricHistories: make(map[string]metricHistory),
+		updateInterval:  updateInterval,
 	}
 }
 
@@ -209,7 +228,7 @@ func (m *Model) updateListSelection() {
 
 func (m Model) Init() tea.Cmd {
 	if m.screen == ScreenConnecting && len(m.selectedHosts) > 0 {
-		return tea.Batch(m.spinner.Tick, m.connectToHosts(), checkForUpdates)
+		return tea.Batch(m.spinner.Tick, animationTick(), m.connectToHosts(), checkForUpdates)
 	}
-	return tea.Batch(m.spinner.Tick, checkForUpdates)
+	return tea.Batch(m.spinner.Tick, animationTick(), checkForUpdates)
 }

@@ -1,4 +1,4 @@
-module github.com/alpindale/ssh-dashboard
+module github.com/allisonhere/rigwatch
 
 go 1.24.4
 

@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/alpindale/ssh-dashboard/internal/gpu/base"
+	"github.com/allisonhere/rigwatch/internal/gpu/base"
 )
 
 type NvidiaProvider struct{}

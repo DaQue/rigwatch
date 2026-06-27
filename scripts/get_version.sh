@@ -31,7 +31,7 @@ if [ "$1" = "--json" ]; then
 }
 EOF
 elif [ "$1" = "--ldflags" ]; then
-    echo "-X 'github.com/alpindale/ssh-dashboard/internal.Version=${VERSION}' -X 'github.com/alpindale/ssh-dashboard/internal.GitCommit=${GIT_COMMIT}' -X 'github.com/alpindale/ssh-dashboard/internal.BuildDate=${BUILD_DATE}' -X 'github.com/alpindale/ssh-dashboard/internal.GitTag=${GIT_TAG}'"
+    echo "-X 'github.com/allisonhere/rigwatch/internal.Version=${VERSION}' -X 'github.com/allisonhere/rigwatch/internal.GitCommit=${GIT_COMMIT}' -X 'github.com/allisonhere/rigwatch/internal.BuildDate=${BUILD_DATE}' -X 'github.com/allisonhere/rigwatch/internal.GitTag=${GIT_TAG}'"
 else
     echo "${VERSION}"
 fi

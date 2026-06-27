@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ type SSHHost struct {
 	User         string
 	Port         string
 	IdentityFile string
+	Local        bool
 }
 
 type SSHClient struct {
@@ -40,6 +42,22 @@ func ParseSSHConfig(configPath string) ([]SSHHost, error) {
 	return parseSSHConfigRecursive(configPath, visited)
 }
 
+func EnsureLocalhost(hosts []SSHHost) []SSHHost {
+	for _, host := range hosts {
+		if host.Name == "localhost" {
+			return hosts
+		}
+	}
+
+	local := SSHHost{
+		Name:     "localhost",
+		Hostname: "localhost",
+		User:     getValidatedUsername(),
+		Local:    true,
+	}
+	return append([]SSHHost{local}, hosts...)
+}
+
 func parseSSHConfigRecursive(configPath string, visited map[string]bool) ([]SSHHost, error) {
 	absPath, err := filepath.Abs(configPath)
 	if err != nil {
@@ -53,6 +71,9 @@ func parseSSHConfigRecursive(configPath string, visited map[string]bool) ([]SSHH
 
 	file, err := os.Open(configPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	defer file.Close()
@@ -77,7 +98,10 @@ func parseSSHConfigRecursive(configPath string, visited map[string]bool) ([]SSHH
 		value := strings.Join(parts[1:], " ")
 
 		if key == "include" {
-			includePath := expandPath(value)
+			includePath := value
+			if strings.HasPrefix(includePath, "~/") || filepath.IsAbs(includePath) {
+				includePath = expandPath(includePath)
+			}
 
 			if !filepath.IsAbs(includePath) {
 				configDir := filepath.Dir(configPath)
@@ -100,8 +124,8 @@ func parseSSHConfigRecursive(configPath string, visited map[string]bool) ([]SSHH
 		}
 
 		if key == "host" {
-			if currentHost != nil && !strings.Contains(currentHost.Name, "*") && !strings.Contains(currentHost.Name, "?") {
-				hosts = append(hosts, *currentHost)
+			if currentHost != nil {
+				hosts = append(hosts, concreteHosts(*currentHost)...)
 			}
 
 			currentHost = &SSHHost{
@@ -122,8 +146,8 @@ func parseSSHConfigRecursive(configPath string, visited map[string]bool) ([]SSHH
 		}
 	}
 
-	if currentHost != nil && !strings.Contains(currentHost.Name, "*") && !strings.Contains(currentHost.Name, "?") {
-		hosts = append(hosts, *currentHost)
+	if currentHost != nil {
+		hosts = append(hosts, concreteHosts(*currentHost)...)
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -131,6 +155,26 @@ func parseSSHConfigRecursive(configPath string, visited map[string]bool) ([]SSHH
 	}
 
 	return hosts, nil
+}
+
+func concreteHosts(host SSHHost) []SSHHost {
+	patterns := strings.Fields(host.Name)
+	if len(patterns) == 0 {
+		return nil
+	}
+
+	hosts := make([]SSHHost, 0, len(patterns))
+	for _, pattern := range patterns {
+		if strings.Contains(pattern, "*") || strings.Contains(pattern, "?") {
+			continue
+		}
+
+		h := host
+		h.Name = pattern
+		hosts = append(hosts, h)
+	}
+
+	return hosts
 }
 
 func expandPath(path string) string {
@@ -289,6 +333,16 @@ func getValidatedSSHAuthSock() string {
 }
 
 func NewSSHClient(host SSHHost) (*SSHClient, error) {
+	if host.Local {
+		if host.Hostname == "" {
+			host.Hostname = "localhost"
+		}
+		if host.User == "" {
+			host.User = getValidatedUsername()
+		}
+		return &SSHClient{config: &host}, nil
+	}
+
 	if host.Hostname == "" {
 		host.Hostname = host.Name
 	}
@@ -392,6 +446,19 @@ func sshAgentAuth() (ssh.AuthMethod, error) {
 }
 
 func isAllowedCommand(cmd string) bool {
+	cmd = strings.TrimSpace(cmd)
+	allowedExact := []string{
+		"cat /proc/net/dev",
+		"grep -H . /sys/class/thermal/thermal_zone*/type /sys/class/thermal/thermal_zone*/temp",
+		"grep -H . /sys/class/hwmon/hwmon*/temp*_label /sys/class/hwmon/hwmon*/temp*_input 2>/dev/null || true",
+		"ps -eo pid=,comm=,pcpu=,pmem= --sort=-pcpu | head -n 25",
+	}
+	for _, allowed := range allowedExact {
+		if cmd == allowed {
+			return true
+		}
+	}
+
 	allowedPrefixes := []string{
 		"lscpu ",
 		"top -",
@@ -403,7 +470,6 @@ func isAllowedCommand(cmd string) bool {
 		"df -",
 	}
 
-	cmd = strings.TrimSpace(cmd)
 	for _, prefix := range allowedPrefixes {
 		if strings.HasPrefix(cmd, prefix) {
 			return true
@@ -416,6 +482,15 @@ func isAllowedCommand(cmd string) bool {
 func (c *SSHClient) ExecuteCommand(cmd string) (string, error) {
 	if !isAllowedCommand(cmd) {
 		return "", fmt.Errorf("command not in allowed list: %s", cmd)
+	}
+
+	if c.config != nil && c.config.Local {
+		localCmd := exec.Command("sh", "-c", cmd)
+		output, err := localCmd.CombinedOutput()
+		if err != nil {
+			return string(output), err
+		}
+		return string(output), nil
 	}
 
 	session, err := c.client.NewSession()

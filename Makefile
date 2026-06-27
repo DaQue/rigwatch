@@ -1,20 +1,20 @@
 .PHONY: build clean install test run snapshot version
 
-BINARY_NAME=ssh-dashboard
+BINARY_NAME=rigwatch
 INSTALL_PATH=$(HOME)/.local/bin
 
 VERSION_LDFLAGS=$(shell ./scripts/get_version.sh --ldflags)
 
 build:
 	@echo "Building $(shell ./scripts/get_version.sh)..."
-	@go build -ldflags "$(VERSION_LDFLAGS)" -o ${BINARY_NAME} ./cmd/ssh_dashboard
+	@go build -ldflags "$(VERSION_LDFLAGS)" -o ${BINARY_NAME} ./cmd/rigwatch
 
 build-all:
 	@echo "Building $(shell ./scripts/get_version.sh) for multiple platforms..."
-	@GOOS=linux GOARCH=amd64 go build -ldflags "$(VERSION_LDFLAGS)" -o ${BINARY_NAME}-linux-amd64 ./cmd/ssh_dashboard
-	@GOOS=darwin GOARCH=amd64 go build -ldflags "$(VERSION_LDFLAGS)" -o ${BINARY_NAME}-darwin-amd64 ./cmd/ssh_dashboard
-	@GOOS=darwin GOARCH=arm64 go build -ldflags "$(VERSION_LDFLAGS)" -o ${BINARY_NAME}-darwin-arm64 ./cmd/ssh_dashboard
-	@GOOS=windows GOARCH=amd64 go build -ldflags "$(VERSION_LDFLAGS)" -o ${BINARY_NAME}-windows-amd64.exe ./cmd/ssh_dashboard
+	@GOOS=linux GOARCH=amd64 go build -ldflags "$(VERSION_LDFLAGS)" -o ${BINARY_NAME}-linux-amd64 ./cmd/rigwatch
+	@GOOS=darwin GOARCH=amd64 go build -ldflags "$(VERSION_LDFLAGS)" -o ${BINARY_NAME}-darwin-amd64 ./cmd/rigwatch
+	@GOOS=darwin GOARCH=arm64 go build -ldflags "$(VERSION_LDFLAGS)" -o ${BINARY_NAME}-darwin-arm64 ./cmd/rigwatch
+	@GOOS=windows GOARCH=amd64 go build -ldflags "$(VERSION_LDFLAGS)" -o ${BINARY_NAME}-windows-amd64.exe ./cmd/rigwatch
 
 snapshot:
 	@echo "Building snapshot with goreleaser..."

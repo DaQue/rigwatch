@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	githubAPIURL       = "https://api.github.com/repos/alpindale/ssh-dashboard/releases/latest"
+	githubAPIURL       = "https://api.github.com/repos/allisonhere/rigwatch/releases/latest"
 	updateCheckTimeout = 3 * time.Second
 )
 

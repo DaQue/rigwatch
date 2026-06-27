@@ -1,6 +1,6 @@
 package gpu
 
-import "github.com/alpindale/ssh-dashboard/internal/gpu/base"
+import "github.com/allisonhere/rigwatch/internal/gpu/base"
 
 // the list of all available GPU providers
 // They will be checked in order, and the first one that detects

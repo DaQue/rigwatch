@@ -1,32 +1,32 @@
-# SSH Dashboard
+# Rigwatch
 
 Monitor CPU, GPU, RAM, and disk usage on your remote servers with a live-updating terminal dashboard.
 
 ### Single-host monitoring:
 <div align="center">
-  <img src="assets/screenshot.png" alt="SSH Dashboard Screenshot" width="800">
+  <img src="assets/screenshot.png" alt="Rigwatch Screenshot" width="800">
 </div>
 
 ### Multi-host monitoring:
 <div align="center">
-  <img src="assets/screenshot2.png" alt="SSH Dashboard Screenshot" width="800">
+  <img src="assets/screenshot2.png" alt="Rigwatch Screenshot" width="800">
 </div>
 
 ## Installation
 
 ### Pre-built Binaries
 
-Download the latest release for your platform from the [Releases page](https://github.com/AlpinDale/ssh-dashboard/releases).
+Download the latest release for your platform from the [Releases page](https://github.com/allisonhere/rigwatch/releases).
 
 **Quick install (Linux/macOS):**
 ```bash
 # Download the binary for your platform
 # Example for Linux AMD64:
-curl -L -o ssh-dashboard https://github.com/AlpinDale/ssh-dashboard/releases/download/v0.0.1/ssh-dashboard-v0.0.1-linux-amd64
+curl -L -o rigwatch https://github.com/allisonhere/rigwatch/releases/download/v0.0.1/rigwatch-v0.0.1-linux-amd64
 
 # Make it executable and move to PATH
-chmod +x ssh-dashboard
-sudo mv ssh-dashboard /usr/local/bin/
+chmod +x rigwatch
+sudo mv rigwatch /usr/local/bin/
 ```
 
 **Supported platforms:**
@@ -38,14 +38,14 @@ sudo mv ssh-dashboard /usr/local/bin/
 
 #### AUR
 ```bash
-yay -S ssh-dashboard-git
+yay -S rigwatch-git
 ```
 
 #### Manual
 
 ```bash
-git clone https://github.com/AlpinDale/ssh-dashboard.git
-cd ssh-dashboard
+git clone https://github.com/allisonhere/rigwatch.git
+cd rigwatch
 make install
 ```
 
@@ -66,7 +66,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Simply run:
 
 ```bash
-ssh-dashboard
+rigwatch
 ```
 
 The tool will:
@@ -92,14 +92,14 @@ Control how often the dashboard refreshes in seconds (default: 5). Supports deci
 
 ```bash
 # Update every second
-ssh-dashboard -n 1
+rigwatch -n 1
 
 # Update 10 times per second (100ms)
-ssh-dashboard -n 0.1
+rigwatch -n 0.1
 
 # or with an env var
 export SSH_DASHBOARD_INTERVAL=0.5
-ssh-dashboard
+rigwatch
 ```
 
 **Keybindings:**

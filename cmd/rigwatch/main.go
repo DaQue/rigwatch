@@ -9,8 +9,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/alpindale/ssh-dashboard/internal"
-	"github.com/alpindale/ssh-dashboard/internal/ui"
+	"github.com/allisonhere/rigwatch/internal"
+	"github.com/allisonhere/rigwatch/internal/ui"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -33,7 +33,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  -h, --help            Show this help message\n")
 		fmt.Fprintf(os.Stderr, "\nArguments:\n")
 		fmt.Fprintf(os.Stderr, "  HOST...               One or more hostnames from SSH config to connect to directly\n")
-		fmt.Fprintf(os.Stderr, "                        Example: ssh-dashboard myHost myOtherHost\n")
+		fmt.Fprintf(os.Stderr, "                        Example: rigwatch myHost myOtherHost\n")
 	}
 
 	var updateIntervalVal float64
@@ -46,7 +46,7 @@ func main() {
 	requestedHosts := flag.Args()
 
 	if showVersion {
-		fmt.Printf("ssh-dashboard version %s\n", internal.FullVersion())
+		fmt.Printf("rigwatch version %s\n", internal.FullVersion())
 		fmt.Printf("  git commit: %s\n", internal.GitCommit)
 		fmt.Printf("  build date: %s\n", internal.BuildDate)
 		fmt.Printf("  git tag:    %s\n", internal.GitTag)
@@ -75,6 +75,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	hosts = internal.EnsureLocalhost(hosts)
 	if len(hosts) == 0 {
 		fmt.Fprintf(os.Stderr, "No hosts found in SSH config\n")
 		os.Exit(1)

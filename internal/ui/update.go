@@ -3,7 +3,7 @@ package ui
 import (
 	"time"
 
-	"github.com/alpindale/ssh-dashboard/internal"
+	"github.com/allisonhere/rigwatch/internal"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -134,8 +134,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			return m, nil
 		}
+		now := time.Now()
+		if previous := m.sysInfos[msg.hostName]; previous != nil {
+			elapsed := now.Sub(m.lastUpdates[msg.hostName]).Seconds()
+			msg.info.Network = rateNetworkInterfaces(previous.Network, msg.info.Network, elapsed)
+		}
 		m.sysInfos[msg.hostName] = msg.info
-		m.lastUpdates[msg.hostName] = time.Now()
+		m.lastUpdates[msg.hostName] = now
+		m.appendMetricHistory(msg.hostName, msg.info)
 
 		if m.screen == ScreenConnecting && len(m.selectedHosts) > 0 {
 			firstHost := m.selectedHosts[0]
@@ -151,6 +157,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case TickMsg:
 		// update every 10 seconds
 		return m, tea.Batch(m.gatherAllSysInfo(), m.tick())
+
+	case AnimationTickMsg:
+		m.animationFrame++
+		return m, animationTick()
 	}
 
 	var spinnerCmd tea.Cmd
@@ -163,4 +173,87 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, spinnerCmd
+}
+
+func (m *Model) appendMetricHistory(hostName string, info *internal.SystemInfo) {
+	if m.metricHistories == nil {
+		m.metricHistories = make(map[string]metricHistory)
+	}
+	history := m.metricHistories[hostName]
+	history.CPU = appendClampedSample(history.CPU, info.CPU.UsagePercent)
+	history.RAM = appendClampedSample(history.RAM, info.RAM.UsagePercent)
+
+	if len(info.GPUs) > 0 {
+		var utilTotal, vramUsed, vramTotal int
+		for _, gpu := range info.GPUs {
+			utilTotal += gpu.Utilization
+			vramUsed += gpu.VRAMUsed
+			vramTotal += gpu.VRAMTotal
+		}
+		history.GPU = appendClampedSample(history.GPU, float64(utilTotal)/float64(len(info.GPUs)))
+		if vramTotal > 0 {
+			history.VRAM = appendClampedSample(history.VRAM, (float64(vramUsed)/float64(vramTotal))*100)
+		}
+	}
+
+	// Track temperature: max across all sensors (includes CPU + GPU from merge)
+	var maxTemp float64
+	for _, t := range info.Temps {
+		if t.Celsius > maxTemp {
+			maxTemp = t.Celsius
+		}
+	}
+	for _, gpu := range info.GPUs {
+		if float64(gpu.Temperature) > maxTemp {
+			maxTemp = float64(gpu.Temperature)
+		}
+	}
+	history.Temp = appendClampedSample(history.Temp, maxTemp)
+
+	// Track network: total throughput normalized to 0-100 (ceiling ~125 MB/s ≈ 1 Gbps)
+	var totalRate float64
+	for _, iface := range info.Network {
+		totalRate += float64(iface.RXBps + iface.TXBps)
+	}
+	networkPercent := 0.0
+	if totalRate > 0 {
+		maxRate := 125.0 * 1024 * 1024 // 125 MB/s
+		pct := totalRate / maxRate * 100
+		if pct > 100 {
+			pct = 100
+		}
+		networkPercent = pct
+	}
+	history.Network = appendClampedSample(history.Network, networkPercent)
+
+	m.metricHistories[hostName] = history
+}
+
+func appendClampedSample(samples []float64, sample float64) []float64 {
+	samples = append(samples, sample)
+	if len(samples) > metricHistoryLimit {
+		return samples[len(samples)-metricHistoryLimit:]
+	}
+	return samples
+}
+
+func rateNetworkInterfaces(previous []internal.NetworkInfo, current []internal.NetworkInfo, elapsedSeconds float64) []internal.NetworkInfo {
+	if elapsedSeconds <= 0 {
+		return current
+	}
+	previousByName := make(map[string]internal.NetworkInfo, len(previous))
+	for _, iface := range previous {
+		previousByName[iface.Name] = iface
+	}
+	rated := make([]internal.NetworkInfo, len(current))
+	for i, iface := range current {
+		rated[i] = iface
+		prev, ok := previousByName[iface.Name]
+		if !ok || iface.RXBytes < prev.RXBytes || iface.TXBytes < prev.TXBytes {
+			continue
+		}
+		rated[i].RXBps = uint64(float64(iface.RXBytes-prev.RXBytes) / elapsedSeconds)
+		rated[i].TXBps = uint64(float64(iface.TXBytes-prev.TXBytes) / elapsedSeconds)
+	}
+	return rated
 }

@@ -3,7 +3,7 @@ package ui
 import (
 	"time"
 
-	"github.com/alpindale/ssh-dashboard/internal"
+	"github.com/allisonhere/rigwatch/internal"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -75,5 +75,11 @@ func (m Model) gatherSysInfoForHost(hostName string) tea.Cmd {
 func (m Model) tick() tea.Cmd {
 	return tea.Tick(m.updateInterval, func(t time.Time) tea.Msg {
 		return TickMsg(t)
+	})
+}
+
+func animationTick() tea.Cmd {
+	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
+		return AnimationTickMsg(t)
 	})
 }

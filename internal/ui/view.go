@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/alpindale/ssh-dashboard/internal"
+	"github.com/allisonhere/rigwatch/internal"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -69,7 +69,7 @@ func (m Model) View() string {
 			if len(m.selectedHosts) > 1 {
 				hostIndicator = fmt.Sprintf(" [%d/%d]", m.currentHostIdx+1, len(m.selectedHosts))
 			}
-			dashboardView := renderDashboard(currentHost.Name+hostIndicator, sysInfo, m.updateInterval, lastUpdate, m.width, m.height, len(m.selectedHosts) > 1)
+			dashboardView := renderDashboardWithHistory(currentHost.Name+hostIndicator, sysInfo, m.metricHistories[currentHost.Name], m.updateInterval, lastUpdate, m.width, m.height, len(m.selectedHosts) > 1, m.animationFrame)
 			return dashboardView + m.renderUpdateNotification()
 		}
 		return m.renderConnectingProgress()
