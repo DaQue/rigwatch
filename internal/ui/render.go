@@ -11,26 +11,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-func renderProgressBar(percent float64, width int, color lipgloss.Color) string {
-	if percent > 100 {
-		percent = 100
-	}
-	if percent < 0 {
-		percent = 0
-	}
-
-	filled := int(float64(width) * percent / 100.0)
-	empty := width - filled
-
-	filledStyle := lipgloss.NewStyle().Foreground(color)
-	emptyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-
-	bar := filledStyle.Render(strings.Repeat("█", filled)) +
-		emptyStyle.Render(strings.Repeat("░", empty))
-
-	return bar
-}
-
 func (m Model) renderConnectingProgress() string {
 	var b strings.Builder
 
@@ -66,10 +46,9 @@ func (m Model) renderConnectingProgress() string {
 		}
 
 		paddedName := host.Name + strings.Repeat(" ", maxNameLen-len(host.Name))
-		body := fmt.Sprintf("%s  %s  %s\n%s", accentStyle.Render("◈"), panelTextStyle.Render(paddedName), statusText, renderSignalBar(cardWidth-4, m.animationFrame+len(host.Name)))
+		body := fmt.Sprintf("%s  %s  %s\n%s", statusIcon, panelTextStyle.Render(paddedName), statusText, renderSignalBar(cardWidth-4, m.animationFrame+len(host.Name)))
 		b.WriteString(renderPanel("HOST LINK", body, cardWidth))
 		b.WriteString("\n")
-		_ = statusIcon
 	}
 
 	b.WriteString("\n")
@@ -163,10 +142,6 @@ func (m Model) renderSingleHostOverview(host internal.SSHHost, width int) string
 	return renderPanel("◈ "+host.Name, b.String(), width)
 }
 
-func renderDashboard(hostName string, info *internal.SystemInfo, updateInterval time.Duration, lastUpdate time.Time, width, height int, multiHost bool, frame int) string {
-	return renderDashboardWithHistory(hostName, info, metricHistory{}, updateInterval, lastUpdate, width, height, multiHost, frame)
-}
-
 func renderDashboardWithHistory(hostName string, info *internal.SystemInfo, history metricHistory, updateInterval time.Duration, lastUpdate time.Time, width, height int, multiHost bool, frame int) string {
 	var b strings.Builder
 
@@ -213,20 +188,6 @@ func renderMetricsGrid(cpu internal.CPUInfo, gpus []internal.GPUInfo, ram intern
 		renderDiskSection(disks, cardWidth) + "\n" +
 		renderNetworkSection(network, history.Network, cardWidth) + "\n" +
 		renderProcessSection(processes, cardWidth) + "\n"
-}
-
-func renderComputeTopSection(cpu internal.CPUInfo, gpus []internal.GPUInfo, width int) string {
-	if width >= 104 {
-		cardWidth := clampInt((width-6)/2, 46, 68)
-		return lipgloss.JoinHorizontal(lipgloss.Top, renderCPUSection(cpu, cardWidth), "    ", renderGPUSummarySection(gpus, cardWidth)) + "\n"
-	}
-
-	cardWidth := clampInt(width-2, 42, 90)
-	return renderCPUSection(cpu, cardWidth) + "\n" + renderGPUSummarySection(gpus, cardWidth) + "\n"
-}
-
-func renderCPUSection(cpu internal.CPUInfo, width int) string {
-	return renderCPUSectionWithHistory(cpu, nil, width)
 }
 
 func renderCPUSectionWithHistory(cpu internal.CPUInfo, history []float64, width int) string {
@@ -288,65 +249,6 @@ func renderCoreMiniGraphs(cores []internal.CPUCoreInfo, width int) string {
 	return strings.Join(rows, "\n")
 }
 
-func renderAggregateGPUSection(gpus []internal.GPUInfo, width int) string {
-	var b strings.Builder
-
-	var totalVRAM, usedVRAM int
-	var totalUtil int
-	for _, gpu := range gpus {
-		totalVRAM += gpu.VRAMTotal
-		usedVRAM += gpu.VRAMUsed
-		totalUtil += gpu.Utilization
-	}
-
-	vramPercent := 0.0
-	if totalVRAM > 0 {
-		vramPercent = (float64(usedVRAM) / float64(totalVRAM)) * 100
-	}
-	avgUtil := 0.0
-	if len(gpus) > 0 {
-		avgUtil = float64(totalUtil) / float64(len(gpus))
-	}
-
-	barWidth := metricBarWidth(width - 16)
-	b.WriteString(fmt.Sprintf("%s %.1f/%.1f GB (%.1f%%) across %d GPUs\n", accentStyle.Render("VRAM"), float64(usedVRAM)/1024.0, float64(totalVRAM)/1024.0, vramPercent, len(gpus)))
-	b.WriteString(renderNeonProgressBar(vramPercent, barWidth))
-	b.WriteString("\n")
-	b.WriteString(fmt.Sprintf("%s %.1f%% average\n", accentStyle.Render("UTIL"), avgUtil))
-	b.WriteString(renderNeonProgressBar(avgUtil, barWidth))
-
-	return renderPanel("TOTAL GPU PRESSURE", b.String(), clampInt(width-2, 42, 120))
-}
-
-func renderGPUSection(gpus []internal.GPUInfo, width int) string {
-	var b strings.Builder
-	cardWidth := clampInt((width-6)/2, 42, 64)
-	if width < 100 {
-		cardWidth = clampInt(width-2, 42, 76)
-	}
-
-	for i := 0; i < len(gpus); i += 2 {
-		leftGPU := renderSingleGPU(gpus[i], cardWidth)
-		if i+1 < len(gpus) && width >= 100 {
-			rightGPU := renderSingleGPU(gpus[i+1], cardWidth)
-			b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, leftGPU, "    ", rightGPU))
-		} else {
-			b.WriteString(leftGPU)
-			if i+1 < len(gpus) {
-				b.WriteString("\n")
-				b.WriteString(renderSingleGPU(gpus[i+1], cardWidth))
-			}
-		}
-		b.WriteString("\n")
-	}
-
-	return strings.TrimRight(b.String(), "\n")
-}
-
-func renderGPUSummarySection(gpus []internal.GPUInfo, width int) string {
-	return renderGPUSummarySectionWithHistory(gpus, nil, nil, width)
-}
-
 func renderGPUSummarySectionWithHistory(gpus []internal.GPUInfo, gpuHistory []float64, vramHistory []float64, width int) string {
 	if len(gpus) == 0 {
 		return renderPanel("GPU", mutedStyle.Render("not detected"), clampInt(width, 42, 90))
@@ -395,57 +297,6 @@ func renderGPUSummarySectionWithHistory(gpus []internal.GPUInfo, gpuHistory []fl
 	}
 
 	return renderPanel("GPU", b.String(), clampInt(width, 42, 90))
-}
-
-func renderSingleGPU(gpu internal.GPUInfo, width int) string {
-	var b strings.Builder
-
-	vramTotalGB := float64(gpu.VRAMTotal) / 1024.0
-	vramUsedGB := float64(gpu.VRAMUsed) / 1024.0
-	vramPercent := 0.0
-	if gpu.VRAMTotal > 0 {
-		vramPercent = (float64(gpu.VRAMUsed) / float64(gpu.VRAMTotal)) * 100
-	}
-
-	powerPercent := 0.0
-	if gpu.PowerLimit > 0 {
-		powerPercent = (float64(gpu.PowerDraw) / float64(gpu.PowerLimit)) * 100
-	}
-
-	powerText := successStyle.Render(fmt.Sprintf("%dW", gpu.PowerDraw))
-	if powerPercent >= 90 {
-		powerText = dangerStyle.Render(fmt.Sprintf("%dW", gpu.PowerDraw))
-	} else if powerPercent >= 70 {
-		powerText = warningStyle.Render(fmt.Sprintf("%dW", gpu.PowerDraw))
-	}
-
-	tempText := successStyle.Render(fmt.Sprintf("%d°C", gpu.Temperature))
-	if gpu.Temperature >= 85 {
-		tempText = dangerStyle.Render(fmt.Sprintf("%d°C", gpu.Temperature))
-	} else if gpu.Temperature >= 75 {
-		tempText = warningStyle.Render(fmt.Sprintf("%d°C", gpu.Temperature))
-	}
-
-	barWidth := metricBarWidth(width - 8)
-	b.WriteString(fmt.Sprintf("%s  %s  %s\n", accentStyle.Render("GPU "+gpu.Index), powerText, tempText))
-	b.WriteString(mutedStyle.Render(truncateVisible(gpu.Name, width-4)))
-	b.WriteString("\n")
-	b.WriteString(fmt.Sprintf("VRAM %.1f/%.1f GB (%.1f%%)\n", vramUsedGB, vramTotalGB, vramPercent))
-	b.WriteString(renderNeonProgressBar(vramPercent, barWidth))
-	b.WriteString("\n")
-	b.WriteString(fmt.Sprintf("UTIL %d%%\n", gpu.Utilization))
-	b.WriteString(renderNeonProgressBar(float64(gpu.Utilization), barWidth))
-
-	return renderPanel("GPU TELEMETRY", b.String(), width)
-}
-
-func renderRAMAndDiskSection(ram internal.RAMInfo, disks []internal.DiskInfo, width int) string {
-	sectionWidth := clampInt(width-2, 42, 90)
-	return renderRAMSection(ram, sectionWidth) + "\n" + renderDiskSection(disks, sectionWidth) + "\n"
-}
-
-func renderRAMSection(ram internal.RAMInfo, width int) string {
-	return renderRAMSectionWithHistory(ram, nil, width)
 }
 
 func renderRAMSectionWithHistory(ram internal.RAMInfo, history []float64, width int) string {

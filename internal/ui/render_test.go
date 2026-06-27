@@ -41,33 +41,6 @@ func TestFormatInterval(t *testing.T) {
 	}
 }
 
-func TestRenderProgressBarClampsPercent(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name    string
-		percent float64
-		filled  int
-		empty   int
-	}{
-		{name: "below zero", percent: -10, filled: 0, empty: 10},
-		{name: "half", percent: 50, filled: 5, empty: 5},
-		{name: "above one hundred", percent: 150, filled: 10, empty: 0},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := lipgloss.NewStyle().Render(renderProgressBar(tt.percent, 10, lipgloss.Color("10")))
-			if filled := strings.Count(got, "█"); filled != tt.filled {
-				t.Fatalf("filled count = %d, want %d in %q", filled, tt.filled, got)
-			}
-			if empty := strings.Count(got, "░"); empty != tt.empty {
-				t.Fatalf("empty count = %d, want %d in %q", empty, tt.empty, got)
-			}
-		})
-	}
-}
-
 func TestRenderGradientTextPreservesVisibleWidth(t *testing.T) {
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	t.Cleanup(func() { lipgloss.SetColorProfile(termenv.Ascii) })
@@ -183,7 +156,7 @@ func TestRenderCPUSectionIncludesAggregateAndCoreMiniGraphs(t *testing.T) {
 		},
 	}
 
-	got := renderCPUSection(cpu, 96)
+	got := renderCPUSectionWithHistory(cpu, nil, 96)
 	for _, want := range []string{"CPU LOAD", "37.5%", "00", "03", "▄"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("rendered CPU section missing %q: %q", want, got)
@@ -207,7 +180,7 @@ func TestRenderCPUSectionAllocatesAllDeclaredCoreSlots(t *testing.T) {
 		},
 	}
 
-	got := renderCPUSection(cpu, 96)
+	got := renderCPUSectionWithHistory(cpu, nil, 96)
 	for _, want := range []string{"00", "01", "02", "03"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing stable core slot %q: %q", want, got)
@@ -340,7 +313,7 @@ func TestRenderMetricsGridStretchesProcessesToNetworkBottom(t *testing.T) {
 		GPUs:      []internal.GPUInfo{{Index: "0", Name: "RTX Test", VRAMTotal: 24000, VRAMUsed: 12000, Utilization: 65, PowerDraw: 250, PowerLimit: 350, Temperature: 70}},
 	}
 
-	got := renderDashboard("test", info, time.Second, time.Unix(0, 0), 120, 40, false, 0)
+	got := renderDashboardWithHistory("test", info, metricHistory{}, time.Second, time.Unix(0, 0), 120, 40, false, 0)
 	lines := strings.Split(got, "\n")
 	networkTop := -1
 	for i, line := range lines {
@@ -371,7 +344,7 @@ func TestRenderDashboardWideLayoutPlacesRamUnderGPUAndDiskUnderCPU(t *testing.T)
 		GPUs: []internal.GPUInfo{{Index: "0", Name: "RTX Test", VRAMTotal: 24000, VRAMUsed: 12000, Utilization: 65, PowerDraw: 250, PowerLimit: 350, Temperature: 70}},
 	}
 
-	got := renderDashboard("test", info, time.Second, time.Unix(0, 0), 120, 40, false, 0)
+	got := renderDashboardWithHistory("test", info, metricHistory{}, time.Second, time.Unix(0, 0), 120, 40, false, 0)
 	var topLine, secondRowLine string
 	for _, line := range strings.Split(got, "\n") {
 		if strings.Contains(line, "CPU LOAD") && strings.Contains(line, "GPU") {
@@ -411,7 +384,7 @@ func TestRenderDashboardPrioritizesCpuAndGpuBeforeRamAndDisk(t *testing.T) {
 		GPUs: []internal.GPUInfo{{Index: "0", Name: "RTX Test", VRAMTotal: 24000, VRAMUsed: 12000, Utilization: 65, PowerDraw: 250, PowerLimit: 350, Temperature: 70}},
 	}
 
-	got := renderDashboard("test", info, time.Second, time.Unix(0, 0), 120, 40, false, 0)
+	got := renderDashboardWithHistory("test", info, metricHistory{}, time.Second, time.Unix(0, 0), 120, 40, false, 0)
 	for _, want := range []string{"CPU LOAD", "GPU", "RAM MATRIX", "DISK ARRAY", "00"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("dashboard missing %q: %q", want, got)
