@@ -86,7 +86,9 @@ func (m Model) View() string {
 			if len(m.selectedHosts) > 1 {
 				hostIndicator = fmt.Sprintf(" [%d/%d]", m.currentHostIdx+1, len(m.selectedHosts))
 			}
-			dashboardView := renderDashboardWithHistory(currentHost.Name+hostIndicator, sysInfo, m.metricHistories[currentHost.Name], m.updateInterval, lastUpdate, m.width, m.height, len(m.selectedHosts) > 1, m.animationFrame)
+			dashboardView := m.renderHostThemed(currentHost.Name, func() string {
+				return renderDashboardWithHistory(currentHost.Name+hostIndicator, sysInfo, m.metricHistories[currentHost.Name], m.updateInterval, lastUpdate, m.width, m.height, len(m.selectedHosts) > 1, m.animationFrame)
+			})
 			return dashboardView + m.renderUpdateNotification()
 		}
 		return m.renderConnectingProgress()

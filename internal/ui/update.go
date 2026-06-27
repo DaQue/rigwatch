@@ -117,6 +117,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				layout := paneLayout(m.width, m.height, len(m.selectedHosts), m.quadPage)
 				if layout.Pages > 1 {
 					m.quadPage = (m.quadPage + 1) % layout.Pages
+					m.clampQuadFocus()
 				}
 			} else if m.screen == ScreenDashboard && len(m.selectedHosts) > 1 {
 				m.currentHostIdx = (m.currentHostIdx + 1) % len(m.selectedHosts)
@@ -130,7 +131,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				layout := paneLayout(m.width, m.height, len(m.selectedHosts), m.quadPage)
 				if layout.Pages > 1 {
 					m.quadPage = (m.quadPage - 1 + layout.Pages) % layout.Pages
+					m.clampQuadFocus()
 				}
+			}
+		case "tab":
+			if m.screen == ScreenQuad {
+				m.moveQuadFocus(1)
+			}
+		case "shift+tab":
+			if m.screen == ScreenQuad {
+				m.moveQuadFocus(-1)
+			}
+		case "]":
+			if m.screen == ScreenQuad {
+				m.cycleFocusedHostTheme(1)
+			}
+		case "[":
+			if m.screen == ScreenQuad {
+				m.cycleFocusedHostTheme(-1)
 			}
 		case "g":
 			switch m.screen {
@@ -329,6 +347,52 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, spinnerCmd
+}
+
+func (m *Model) visibleQuadHostCount() int {
+	layout := paneLayout(m.width, m.height, len(m.selectedHosts), m.quadPage)
+	return max(0, layout.End-layout.Start)
+}
+
+func (m *Model) clampQuadFocus() {
+	count := m.visibleQuadHostCount()
+	if count == 0 {
+		m.quadFocus = 0
+		return
+	}
+	m.quadFocus = clampInt(m.quadFocus, 0, count-1)
+}
+
+func (m *Model) moveQuadFocus(delta int) {
+	count := m.visibleQuadHostCount()
+	if count == 0 {
+		m.quadFocus = 0
+		return
+	}
+	m.quadFocus = (m.quadFocus + delta + count) % count
+}
+
+func (m *Model) focusedQuadHost() (internal.SSHHost, bool) {
+	layout := paneLayout(m.width, m.height, len(m.selectedHosts), m.quadPage)
+	if layout.End <= layout.Start {
+		return internal.SSHHost{}, false
+	}
+	m.clampQuadFocus()
+	idx := layout.Start + m.quadFocus
+	if idx < layout.Start || idx >= layout.End || idx >= len(m.selectedHosts) {
+		return internal.SSHHost{}, false
+	}
+	return m.selectedHosts[idx], true
+}
+
+func (m *Model) cycleFocusedHostTheme(delta int) {
+	host, ok := m.focusedQuadHost()
+	if !ok {
+		return
+	}
+	current := m.themePrefs.ThemeNameForHost(host.Name)
+	m.themePrefs.SetHostTheme(host.Name, nextThemeName(current, delta))
+	_ = SaveThemePreferences(m.themePrefs)
 }
 
 func (m *Model) appendMetricHistory(hostName string, info *internal.SystemInfo) {

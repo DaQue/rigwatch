@@ -81,6 +81,8 @@ The tool will:
 - While in the dashboard, press `c` to return to host selection to add/remove hosts
 - Press `n` to cycle through connected hosts (like tmux sessions)
 - Press `t` to toggle overview mode, showing all selected hosts at once with GPU pressure summaries
+- Press `g` to open the quad view, with up to four large host panes per page
+- In quad view, press `Tab` / `Shift+Tab` to focus a pane and `[` / `]` to cycle that host's theme
 - Press `s` to exit the dashboard and drop into an interactive SSH shell with the current host
 - All connections remain active - no need to reconnect!
 
@@ -108,8 +110,15 @@ rigwatch
 - `Enter` - Connect to selected host(s)
 - `n` - Switch to next host (when multiple hosts selected)
 - `t` - Toggle overview screen (shows all hosts at once)
+- `g` - Toggle quad grid view
+- `Tab` / `Shift+Tab` - Focus next/previous quad pane
+- `[` / `]` - Cycle the focused host's theme in quad view
 - `s` - Exit and SSH into current host
 - `c` - Add hosts (from dashboard, returns to host selection)
+
+**Themes:**
+
+Rigwatch includes per-host themes. The default theme is `rigwatch`, which preserves the original look. In quad view, focus a pane with `Tab` and cycle that host's theme with `[` / `]`. Choices are saved to your user config directory at `rigwatch/themes.json` and follow the SSH host alias across solo, overview, and quad views.
 
 ## SSH Configuration
 

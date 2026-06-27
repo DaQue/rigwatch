@@ -43,6 +43,8 @@ type Model struct {
 	animationFrame  int
 	metricHistories map[string]metricHistory
 	quadPage        int
+	quadFocus       int
+	themePrefs      ThemePreferences
 
 	// Connection-manager sub-state (host-list screen only).
 	manageMode         manageMode
@@ -190,6 +192,7 @@ func InitialModel(hosts []internal.SSHHost, updateInterval time.Duration) Model 
 		failedHosts:     make(map[string]error),
 		metricHistories: make(map[string]metricHistory),
 		updateInterval:  updateInterval,
+		themePrefs:      loadThemePreferencesOrDefault(),
 	}
 }
 
@@ -231,6 +234,7 @@ func InitialModelWithHosts(allHosts []internal.SSHHost, selectedHosts []internal
 		failedHosts:     make(map[string]error),
 		metricHistories: make(map[string]metricHistory),
 		updateInterval:  updateInterval,
+		themePrefs:      loadThemePreferencesOrDefault(),
 	}
 }
 
@@ -260,4 +264,12 @@ func (m Model) Init() tea.Cmd {
 		return tea.Batch(m.spinner.Tick, animationTick(), m.connectToHosts(), checkForUpdates)
 	}
 	return tea.Batch(m.spinner.Tick, animationTick(), checkForUpdates)
+}
+
+func loadThemePreferencesOrDefault() ThemePreferences {
+	prefs, err := LoadThemePreferences()
+	if err != nil {
+		return ThemePreferences{Hosts: make(map[string]string)}
+	}
+	return prefs
 }

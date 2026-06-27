@@ -77,6 +77,12 @@ func (m Model) renderOverview() string {
 }
 
 func (m Model) renderSingleHostOverview(host internal.SSHHost, width int) string {
+	return m.renderHostThemed(host.Name, func() string {
+		return m.renderSingleHostOverviewThemed(host, width)
+	})
+}
+
+func (m Model) renderSingleHostOverviewThemed(host internal.SSHHost, width int) string {
 	sysInfo := m.sysInfos[host.Name]
 	if sysInfo == nil {
 		body := fmt.Sprintf("%s\n%s", mutedStyle.Render("awaiting telemetry"), renderSignalBar(width-4, m.animationFrame+len(host.Name)))

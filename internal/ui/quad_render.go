@@ -17,6 +17,7 @@ func (m Model) renderQuad() string {
 	total := len(m.selectedHosts)
 	layout := paneLayout(m.width, m.height, total, m.quadPage)
 	m.quadPage = clampInt(m.quadPage, 0, layout.Pages-1)
+	m.quadFocus = clampInt(m.quadFocus, 0, max(0, layout.End-layout.Start-1))
 
 	pageHint := ""
 	if layout.Pages > 1 {
@@ -32,7 +33,7 @@ func (m Model) renderQuad() string {
 		for col := 0; col < layout.Columns; col++ {
 			idx := layout.Start + row*layout.Columns + col
 			if idx < layout.End {
-				cells = append(cells, m.renderQuadPanel(m.selectedHosts[idx], layout.CellWidth, layout.BodyLines))
+				cells = append(cells, m.renderQuadPanelWithFocus(m.selectedHosts[idx], layout.CellWidth, layout.BodyLines, idx-layout.Start == m.quadFocus))
 			} else {
 				cells = append(cells, renderEmptyQuadCell(layout.CellWidth, layout.BodyLines))
 			}
@@ -85,17 +86,23 @@ func renderEmptyQuadCell(width, maxBodyLines int) string {
 }
 
 func (m Model) renderQuadPanel(host internal.SSHHost, width, maxBodyLines int) string {
+	return m.renderQuadPanelWithFocus(host, width, maxBodyLines, false)
+}
+
+func (m Model) renderQuadPanelWithFocus(host internal.SSHHost, width, maxBodyLines int, focused bool) string {
 	sysInfo := m.sysInfos[host.Name]
 	if sysInfo == nil {
 		body := fmt.Sprintf("%s\n%s", mutedStyle.Render("awaiting telemetry"), renderSignalBar(width-4, m.animationFrame+len(host.Name)))
-		return renderPanel("◈ "+host.Name, body, width)
+		return m.renderThemedHostPanel(host, focused, body, width)
 	}
 
 	history := m.metricHistories[host.Name]
-	body := renderMetricsGrid(sysInfo.CPU, sysInfo.GPUs, sysInfo.RAM, sysInfo.Disk, sysInfo.Temps, sysInfo.Network, sysInfo.Processes, history, width-2)
+	body := m.renderHostThemed(host.Name, func() string {
+		return renderMetricsGrid(sysInfo.CPU, sysInfo.GPUs, sysInfo.RAM, sysInfo.Disk, sysInfo.Temps, sysInfo.Network, sysInfo.Processes, history, width-2)
+	})
 	lines := fitLinesToPane(body, maxBodyLines)
 
-	return renderPanel("◈ "+host.Name, strings.Join(lines, "\n"), width)
+	return m.renderThemedHostPanel(host, focused, strings.Join(lines, "\n"), width)
 }
 
 func fitLinesToPane(body string, maxBodyLines int) []string {
