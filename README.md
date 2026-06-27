@@ -2,16 +2,6 @@
 
 Monitor CPU, GPU, RAM, and disk usage on your remote servers with a live-updating terminal dashboard.
 
-### Single-host monitoring:
-<div align="center">
-  <img src="assets/screenshot.png" alt="Rigwatch Screenshot" width="800">
-</div>
-
-### Multi-host monitoring:
-<div align="center">
-  <img src="assets/screenshot2.png" alt="Rigwatch Screenshot" width="800">
-</div>
-
 ## Installation
 
 ### Pre-built Binaries
@@ -224,6 +214,8 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 - Verify the user has appropriate access rights
 
 ## Acknowledgments
+
+Rigwatch began from the `ssh-dashboard` codebase and has since grown into a substantially expanded continuation with managed hosts, key installation, multi-host pane layouts, per-host themes, broader telemetry, and release tooling. Credit is due to the original ssh-dashboard work and the contributors visible in the project history: AlpinDale, Leon Letto, bitwise, and Allie Bayless.
 
 Built with:
 - [Bubble Tea](https://github.com/charmbracelet/bubbletea) - TUI framework
