@@ -28,7 +28,7 @@ builds:
 
 archives:
   - id: default
-    name_template: "{{ .ProjectName }}-{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    name_template: "{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}"
     formats: [binary]
 
 checksum:

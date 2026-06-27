@@ -10,19 +10,21 @@ Download the latest release for your platform from the [Releases page](https://g
 
 **Quick install (Linux/macOS):**
 ```bash
-# Download the binary for your platform
-# Example for Linux AMD64:
-curl -L -o rigwatch https://github.com/allisonhere/rigwatch/releases/download/v0.0.1/rigwatch-v0.0.1-linux-amd64
+# Download the latest binary for your platform (example: Linux AMD64).
+# -f makes curl fail on a 404 instead of saving the error page as "rigwatch".
+curl -fL -o rigwatch https://github.com/allisonhere/rigwatch/releases/latest/download/rigwatch-linux-amd64
 
 # Make it executable and move to PATH
 chmod +x rigwatch
 sudo mv rigwatch /usr/local/bin/
 ```
 
+Swap `rigwatch-linux-amd64` for the asset matching your platform.
+
 **Supported platforms:**
-- `linux-amd64`, `linux-arm64`
-- `darwin-amd64` (Intel Mac), `darwin-arm64` (Apple Silicon)
-- `windows-amd64.exe`, `windows-arm64.exe`
+- `rigwatch-linux-amd64`, `rigwatch-linux-arm64`
+- `rigwatch-darwin-amd64` (Intel Mac), `rigwatch-darwin-arm64` (Apple Silicon)
+- `rigwatch-windows-amd64.exe`, `rigwatch-windows-arm64.exe`
 
 ### From Source
 
