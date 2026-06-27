@@ -22,6 +22,7 @@ type SSHHost struct {
 	Port         string
 	IdentityFile string
 	Local        bool
+	Managed      bool
 }
 
 type SSHClient struct {

@@ -59,7 +59,7 @@ func (m Model) renderConnectingProgress() string {
 func (m Model) renderOverview() string {
 	var b strings.Builder
 
-	subtitle := fmt.Sprintf("v%s  •  refreshed %s  •  interval %s  •  t per-host  •  c add hosts  •  q quit",
+	subtitle := fmt.Sprintf("v%s  •  refreshed %s  •  interval %s  •  t per-host  •  g grid  •  c add hosts  •  q quit",
 		internal.ShortVersion(), time.Now().Format("15:04:05"), formatInterval(m.updateInterval))
 	b.WriteString(renderHeroHeader(fmt.Sprintf("COMMAND CENTER // %d HOSTS", len(m.selectedHosts)), subtitle, m.width, m.animationFrame))
 	b.WriteString("\n\n")
@@ -147,7 +147,7 @@ func renderDashboardWithHistory(hostName string, info *internal.SystemInfo, hist
 
 	navHint := ""
 	if multiHost {
-		navHint = "  •  n next  •  t overview"
+		navHint = "  •  n next  •  t overview  •  g grid"
 	}
 	subtitle := fmt.Sprintf("v%s  •  refreshed %s  •  interval %s%s  •  s shell  •  c add hosts  •  q quit",
 		internal.ShortVersion(), lastUpdate.Format("15:04:05"), formatInterval(updateInterval), navHint)

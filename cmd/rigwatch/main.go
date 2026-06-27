@@ -69,13 +69,18 @@ func main() {
 		}
 	}
 
-	hosts, err := internal.ParseSSHConfig("")
+	// Bootstrap the rigwatch-managed config Include so connection-manager
+	// edits are visible to both rigwatch and the system ssh client.
+	if err := internal.EnsureIncludeDirective(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not set up managed SSH config: %v\n", err)
+	}
+
+	hosts, err := internal.LoadAllHosts()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing SSH config: %v\n", err)
 		os.Exit(1)
 	}
 
-	hosts = internal.EnsureLocalhost(hosts)
 	if len(hosts) == 0 {
 		fmt.Fprintf(os.Stderr, "No hosts found in SSH config\n")
 		os.Exit(1)

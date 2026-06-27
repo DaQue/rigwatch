@@ -4,14 +4,66 @@ import (
 	"time"
 
 	"github.com/allisonhere/rigwatch/internal"
+	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if msg.String() == "ctrl+c" {
+			for _, client := range m.clients {
+				if client != nil {
+					client.Close()
+				}
+			}
+			return m, tea.Quit
+		}
+
+		// While a connection-manager sub-mode is active, all keys feed it.
+		if m.screen == ScreenHostList && m.manageMode != manageNone {
+			return m.updateManage(msg)
+		}
+
+		// Host-list management shortcuts (suppressed while typing a filter).
+		if m.screen == ScreenHostList && m.list.FilterState() != list.Filtering {
+			switch msg.String() {
+			case "a":
+				m.startAddForm()
+				return m, textinput.Blink
+			case "e":
+				if item, ok := m.list.SelectedItem().(hostItem); ok && !item.host.Local {
+					m.startEditForm(item.host)
+					return m, textinput.Blink
+				}
+				return m, nil
+			case "d":
+				if item, ok := m.list.SelectedItem().(hostItem); ok {
+					switch {
+					case item.host.Managed:
+						m.pendingHost = item.host
+						m.manageMode = manageConfirmDelete
+					case !item.host.Local:
+						m.manageMode = manageResult
+						m.manageStatus = item.host.Name + " comes from ~/.ssh/config and isn't managed by rigwatch. Edit it there, or press e to save a managed copy."
+						m.manageErr = true
+					}
+				}
+				return m, nil
+			case "i":
+				if item, ok := m.list.SelectedItem().(hostItem); ok && !item.host.Local {
+					m.pendingHost = item.host
+					m.manageMode = manageBusy
+					m.manageStatus = "Scanning host key for " + item.host.Name + "…"
+					return m, scanHostKeyCmd(item.host)
+				}
+				return m, nil
+			}
+		}
+
 		switch msg.String() {
-		case "ctrl+c", "q":
+		case "q":
 			for _, client := range m.clients {
 				if client != nil {
 					client.Close()
@@ -61,15 +113,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "n":
-			if m.screen == ScreenDashboard && len(m.selectedHosts) > 1 {
+			if m.screen == ScreenQuad {
+				if _, _, pages := quadPageBounds(len(m.selectedHosts), m.quadPage); pages > 1 {
+					m.quadPage = (m.quadPage + 1) % pages
+				}
+			} else if m.screen == ScreenDashboard && len(m.selectedHosts) > 1 {
 				m.currentHostIdx = (m.currentHostIdx + 1) % len(m.selectedHosts)
 				nextHost := m.selectedHosts[m.currentHostIdx]
 				if m.clients[nextHost.Name] == nil {
 					return m, m.connectToHost(nextHost)
 				}
 			}
+		case "p":
+			if m.screen == ScreenQuad {
+				if _, _, pages := quadPageBounds(len(m.selectedHosts), m.quadPage); pages > 1 {
+					m.quadPage = (m.quadPage - 1 + pages) % pages
+				}
+			}
+		case "g":
+			switch m.screen {
+			case ScreenDashboard, ScreenOverview:
+				m.screen = ScreenQuad
+				m.quadPage = 0
+			case ScreenQuad:
+				m.screen = ScreenDashboard
+			}
+		case "esc":
+			if m.screen == ScreenQuad {
+				m.screen = ScreenDashboard
+			}
 		case "c":
-			if m.screen == ScreenDashboard || m.screen == ScreenOverview {
+			if m.screen == ScreenDashboard || m.screen == ScreenOverview || m.screen == ScreenQuad {
 				m.screen = ScreenHostList
 				m.updateListSelection()
 			}
@@ -77,6 +151,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.screen == ScreenDashboard && len(m.selectedHosts) > 1 {
 				m.screen = ScreenOverview
 			} else if m.screen == ScreenOverview {
+				m.screen = ScreenDashboard
+			} else if m.screen == ScreenQuad {
 				m.screen = ScreenDashboard
 			}
 		case "s":
@@ -161,15 +237,93 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case AnimationTickMsg:
 		m.animationFrame++
 		return m, animationTick()
+
+	case hostSavedMsg:
+		if msg.err != nil {
+			m.manageStatus = msg.err.Error()
+			m.manageErr = true
+			m.manageMode = manageForm
+			m.installAfterSave = false
+			return m, nil
+		}
+		m.reloadHosts()
+		if m.installAfterSave {
+			m.installAfterSave = false
+			host := m.pendingHost
+			m.manageMode = manageBusy
+			m.manageStatus = "Scanning host key for " + host.Name + "…"
+			return m, scanHostKeyCmd(host)
+		}
+		m.resetManage()
+		return m, nil
+
+	case hostDeletedMsg:
+		if msg.err != nil {
+			m.manageMode = manageResult
+			m.manageStatus = msg.err.Error()
+			m.manageErr = true
+			return m, nil
+		}
+		m.reloadHosts()
+		m.resetManage()
+		return m, nil
+
+	case keyScanMsg:
+		if msg.err != nil {
+			m.manageMode = manageResult
+			m.manageStatus = msg.err.Error()
+			m.manageErr = true
+			return m, nil
+		}
+		m.pendingHostKey = msg.key
+		m.pendingFingerprint = msg.fingerprint
+		m.manageMode = manageHostKeyConfirm
+		return m, nil
+
+	case testConnectedMsg:
+		if m.manageMode != manageForm {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.manageStatus = "✗ " + msg.err.Error()
+			m.manageErr = true
+		} else {
+			m.manageStatus = "✓ Connection OK"
+			m.manageErr = false
+		}
+		return m, nil
+
+	case keyInstalledMsg:
+		m.manageMode = manageResult
+		if msg.err != nil {
+			m.manageStatus = "Key installation failed: " + msg.err.Error()
+			m.manageErr = true
+		} else {
+			m.manageStatus = "✓ Public key installed on " + m.pendingHost.Name
+			m.manageErr = false
+		}
+		return m, nil
 	}
 
 	var spinnerCmd tea.Cmd
 	m.spinner, spinnerCmd = m.spinner.Update(msg)
 
 	if m.screen == ScreenHostList {
-		var listCmd tea.Cmd
-		m.list, listCmd = m.list.Update(msg)
-		return m, tea.Batch(spinnerCmd, listCmd)
+		switch m.manageMode {
+		case manageForm:
+			var cmd tea.Cmd
+			m.formInputs[m.formFocus], cmd = m.formInputs[m.formFocus].Update(msg)
+			return m, tea.Batch(spinnerCmd, cmd)
+		case managePassword:
+			var cmd tea.Cmd
+			m.passwordInput, cmd = m.passwordInput.Update(msg)
+			return m, tea.Batch(spinnerCmd, cmd)
+		case manageNone:
+			var listCmd tea.Cmd
+			m.list, listCmd = m.list.Update(msg)
+			return m, tea.Batch(spinnerCmd, listCmd)
+		}
+		return m, spinnerCmd
 	}
 
 	return m, spinnerCmd

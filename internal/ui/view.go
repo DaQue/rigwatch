@@ -29,6 +29,21 @@ func (m Model) renderUpdateNotification() string {
 func (m Model) View() string {
 	switch m.screen {
 	case ScreenHostList:
+		switch m.manageMode {
+		case manageForm:
+			return m.renderHostForm()
+		case manageConfirmDelete:
+			return m.renderDeleteConfirm()
+		case manageHostKeyConfirm:
+			return m.renderHostKeyConfirm()
+		case managePassword:
+			return m.renderPasswordPrompt()
+		case manageBusy:
+			return m.renderManageBusy()
+		case manageResult:
+			return m.renderManageResult()
+		}
+
 		listView := m.list.View()
 		if len(m.failedHosts) > 0 {
 			failedDetails := make([]string, 0, len(m.failedHosts))
@@ -46,6 +61,8 @@ func (m Model) View() string {
 			footer := fmt.Sprintf("\nSelected (%d): %s", len(m.selectedHosts), strings.Join(selectedNames, ", "))
 			listView += lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Render(footer)
 		}
+		manageHint := "\na add • e edit • d delete • i install key"
+		listView += lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(manageHint)
 		versionFooter := fmt.Sprintf("\nv%s", internal.ShortVersion())
 		listView += lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(versionFooter)
 		listView += m.renderUpdateNotification()
@@ -77,6 +94,9 @@ func (m Model) View() string {
 	case ScreenOverview:
 		overviewView := m.renderOverview()
 		return overviewView + m.renderUpdateNotification()
+
+	case ScreenQuad:
+		return m.renderQuad() + m.renderUpdateNotification()
 	}
 
 	return ""

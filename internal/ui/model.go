@@ -8,8 +8,10 @@ import (
 	"github.com/allisonhere/rigwatch/internal"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"golang.org/x/crypto/ssh"
 )
 
 type Screen int
@@ -19,6 +21,7 @@ const (
 	ScreenConnecting
 	ScreenDashboard
 	ScreenOverview
+	ScreenQuad
 )
 
 type Model struct {
@@ -39,7 +42,33 @@ type Model struct {
 	updateInfo      internal.UpdateInfo
 	animationFrame  int
 	metricHistories map[string]metricHistory
+	quadPage        int
+
+	// Connection-manager sub-state (host-list screen only).
+	manageMode         manageMode
+	formInputs         []textinput.Model
+	formFocus          int
+	formOriginalName   string
+	passwordInput      textinput.Model
+	manageStatus       string
+	manageErr          bool
+	pendingHost        internal.SSHHost
+	pendingHostKey     ssh.PublicKey
+	pendingFingerprint string
+	installAfterSave   bool
 }
+
+type manageMode int
+
+const (
+	manageNone manageMode = iota
+	manageForm
+	manageConfirmDelete
+	manageHostKeyConfirm
+	managePassword
+	manageBusy
+	manageResult
+)
 
 const metricHistoryLimit = 40
 
