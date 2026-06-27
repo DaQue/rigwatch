@@ -114,8 +114,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "n":
 			if m.screen == ScreenQuad {
-				if _, _, pages := quadPageBounds(len(m.selectedHosts), m.quadPage); pages > 1 {
-					m.quadPage = (m.quadPage + 1) % pages
+				layout := paneLayout(m.width, m.height, len(m.selectedHosts), m.quadPage)
+				if layout.Pages > 1 {
+					m.quadPage = (m.quadPage + 1) % layout.Pages
 				}
 			} else if m.screen == ScreenDashboard && len(m.selectedHosts) > 1 {
 				m.currentHostIdx = (m.currentHostIdx + 1) % len(m.selectedHosts)
@@ -126,8 +127,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "p":
 			if m.screen == ScreenQuad {
-				if _, _, pages := quadPageBounds(len(m.selectedHosts), m.quadPage); pages > 1 {
-					m.quadPage = (m.quadPage - 1 + pages) % pages
+				layout := paneLayout(m.width, m.height, len(m.selectedHosts), m.quadPage)
+				if layout.Pages > 1 {
+					m.quadPage = (m.quadPage - 1 + layout.Pages) % layout.Pages
 				}
 			}
 		case "g":

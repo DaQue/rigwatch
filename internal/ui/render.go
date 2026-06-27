@@ -64,24 +64,13 @@ func (m Model) renderOverview() string {
 	b.WriteString(renderHeroHeader(fmt.Sprintf("COMMAND CENTER // %d HOSTS", len(m.selectedHosts)), subtitle, m.width, m.animationFrame))
 	b.WriteString("\n\n")
 
-	cardWidth := clampInt((m.width-6)/2, 42, 64)
-	if m.width < 100 {
-		cardWidth = clampInt(m.width-4, 42, 76)
-	}
-
-	for i := 0; i < len(m.selectedHosts); i += 2 {
-		leftHost := m.renderSingleHostOverview(m.selectedHosts[i], cardWidth)
-		if i+1 < len(m.selectedHosts) && m.width >= 100 {
-			rightHost := m.renderSingleHostOverview(m.selectedHosts[i+1], cardWidth)
-			b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, leftHost, "    ", rightHost))
-		} else {
-			b.WriteString(leftHost)
-			if i+1 < len(m.selectedHosts) {
-				b.WriteString("\n")
-				b.WriteString(m.renderSingleHostOverview(m.selectedHosts[i+1], cardWidth))
-			}
+	layout := paneLayout(m.width, m.height, len(m.selectedHosts), 0)
+	for i := 0; i < len(m.selectedHosts); i += layout.PageSize() {
+		cells := make([]string, 0, layout.PageSize())
+		for col := 0; col < layout.PageSize() && i+col < len(m.selectedHosts); col++ {
+			cells = append(cells, m.renderSingleHostOverview(m.selectedHosts[i+col], layout.CellWidth))
 		}
-		b.WriteString("\n")
+		b.WriteString(joinPaneRows(cells, layout.Columns))
 	}
 
 	return b.String()
@@ -162,6 +151,18 @@ func renderDashboardWithHistory(hostName string, info *internal.SystemInfo, hist
 }
 
 func renderMetricsGrid(cpu internal.CPUInfo, gpus []internal.GPUInfo, ram internal.RAMInfo, disks []internal.DiskInfo, temps []internal.TemperatureInfo, network []internal.NetworkInfo, processes []internal.ProcessInfo, history metricHistory, width int) string {
+	if width >= 156 {
+		cardWidth := clampInt((width-8)/3, 46, 68)
+		leftColumn := renderCPUSectionWithHistory(cpu, history.CPU, cardWidth) + "\n" +
+			renderDiskSection(disks, cardWidth)
+		middleColumn := renderGPUSummarySectionWithHistory(gpus, history.GPU, history.VRAM, cardWidth) + "\n" +
+			renderRAMSectionWithHistory(ram, history.RAM, cardWidth) + "\n" +
+			renderTemperatureSection(temps, gpus, history.Temp, cardWidth)
+		rightColumn := renderNetworkSection(network, history.Network, cardWidth) + "\n" +
+			renderProcessSection(processes, cardWidth)
+		return joinGridCells([]string{leftColumn, middleColumn, rightColumn}) + "\n"
+	}
+
 	if width >= 104 {
 		cardWidth := clampInt((width-6)/2, 46, 68)
 		leftWidth := clampInt(cardWidth-2, 38, 120)

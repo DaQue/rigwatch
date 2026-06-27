@@ -132,6 +132,17 @@ func TestRenderSignalBarRespectsWidth(t *testing.T) {
 	}
 }
 
+func TestRenderHeroHeaderUsesLargeTerminalWidth(t *testing.T) {
+	got := renderHeroHeader("RIGWATCH", "status", 220, 0)
+	lines := strings.Split(got, "\n")
+	if len(lines) < 3 {
+		t.Fatalf("expected title, subtitle, and signal line, got %q", got)
+	}
+	if width := lipgloss.Width(lines[2]); width != 218 {
+		t.Fatalf("signal width = %d, want 218 for a 220-column terminal", width)
+	}
+}
+
 func TestRenderPanelIncludesDoubleBorderWhenWideEnough(t *testing.T) {
 	got := renderPanel("CPU", "Usage: 12%", 34)
 	if !strings.Contains(got, "CPU") || !strings.Contains(got, "Usage: 12%") {
@@ -139,6 +150,13 @@ func TestRenderPanelIncludesDoubleBorderWhenWideEnough(t *testing.T) {
 	}
 	if width := lipgloss.Width(strings.Split(got, "\n")[0]); width != 34 {
 		t.Fatalf("panel first-line width = %d, want 34 in %q", width, got)
+	}
+}
+
+func TestRenderPanelUsesAssignedWidePaneWidth(t *testing.T) {
+	got := renderPanel("HOST", "body", 180)
+	if width := lipgloss.Width(strings.Split(got, "\n")[0]); width != 180 {
+		t.Fatalf("panel width = %d, want assigned pane width 180", width)
 	}
 }
 
@@ -288,6 +306,51 @@ func TestRenderProcessSectionShowsTopProcesses(t *testing.T) {
 	}
 }
 
+func TestRenderQuadPanelMirrorsSingleDashboardSections(t *testing.T) {
+	host := internal.SSHHost{Name: "box"}
+	info := sampleLargeSystemInfo()
+	m := Model{
+		sysInfos:        map[string]*internal.SystemInfo{"box": info},
+		metricHistories: map[string]metricHistory{},
+	}
+
+	got := m.renderQuadPanel(host, 108, 30)
+	for _, want := range []string{"CPU LOAD", "GPU", "RAM MATRIX", "DISK ARRAY", "NETWORK I/O", "TOP PROCESSES"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("quad pane should mirror single dashboard section %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "CPU   50.0%") {
+		t.Fatalf("quad pane should not use the old compact summary rows:\n%s", got)
+	}
+}
+
+func sampleLargeSystemInfo() *internal.SystemInfo {
+	processes := make([]internal.ProcessInfo, 0, 8)
+	for i := 0; i < 8; i++ {
+		processes = append(processes, internal.ProcessInfo{PID: 1000 + i, Command: "proc-0" + string(rune('0'+i)), CPUPercent: float64(80 - i), MemPercent: float64(i)})
+	}
+	return &internal.SystemInfo{
+		CPU: internal.CPUInfo{Model: "CPU", Count: "16", Usage: "50.0%", UsagePercent: 50},
+		RAM: internal.RAMInfo{Total: 32000, Used: 16000, UsagePercent: 50},
+		GPUs: []internal.GPUInfo{
+			{Index: "0", Name: "RTX Test", VRAMTotal: 24000, VRAMUsed: 12000, Utilization: 65, PowerDraw: 250, PowerLimit: 350, Temperature: 70},
+		},
+		Disk: []internal.DiskInfo{
+			{MountPoint: "/", Used: "42G", Size: "100G", UsagePercent: "42%"},
+			{MountPoint: "/home", Used: "80G", Size: "200G", UsagePercent: "40%"},
+			{MountPoint: "/data1", Used: "300G", Size: "1T", UsagePercent: "30%"},
+			{MountPoint: "/data2", Used: "400G", Size: "1T", UsagePercent: "40%"},
+		},
+		Network: []internal.NetworkInfo{
+			{Name: "eth0", RXBps: 1024 * 1024, TXBps: 512 * 1024},
+			{Name: "eth1", RXBps: 2 * 1024 * 1024, TXBps: 1024 * 1024},
+			{Name: "eth2", RXBps: 3 * 1024 * 1024, TXBps: 2 * 1024 * 1024},
+		},
+		Processes: processes,
+	}
+}
+
 func TestRenderMetricsGridStretchesProcessesToNetworkBottom(t *testing.T) {
 	info := &internal.SystemInfo{
 		CPU: internal.CPUInfo{Model: "CPU", Count: "16", Usage: "50.0%", UsagePercent: 50, Cores: []internal.CPUCoreInfo{
@@ -373,6 +436,16 @@ func TestRenderDashboardWideLayoutPlacesRamUnderGPUAndDiskUnderCPU(t *testing.T)
 	diskColumnWidth := lipgloss.Width(secondRowColumns[0])
 	if cpuColumnWidth != diskColumnWidth {
 		t.Fatalf("expected disk column width to equal CPU column width, got cpu=%d disk=%d\ntop: %q\nrow: %q", cpuColumnWidth, diskColumnWidth, topLine, secondRowLine)
+	}
+}
+
+func TestRenderDashboardTallLayoutStaysComposed(t *testing.T) {
+	got := renderDashboardWithHistory("test", sampleLargeSystemInfo(), metricHistory{}, time.Second, time.Unix(0, 0), 140, 70, false, 0)
+	if strings.Contains(got, "proc-04") {
+		t.Fatalf("single-host dashboard should stay composed instead of expanding long process lists:\n%s", got)
+	}
+	if !strings.Contains(got, "TOP PROCESSES") {
+		t.Fatalf("single-host dashboard should still include the composed process panel:\n%s", got)
 	}
 }
 

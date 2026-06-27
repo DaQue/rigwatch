@@ -220,7 +220,7 @@ func resampleValues(values []float64, width int) []float64 {
 }
 
 func renderPanel(title string, body string, width int) string {
-	width = clampInt(width, 16, 140)
+	width = max(16, width)
 	innerWidth := width - 2
 	titleText := " " + title + " "
 	if lipgloss.Width(titleText) > innerWidth {
@@ -259,7 +259,7 @@ func renderPanel(title string, body string, width int) string {
 }
 
 func renderHeroHeader(title string, subtitle string, width int, frame int) string {
-	width = clampInt(width, 40, 140)
+	width = max(40, width)
 	contentWidth := width - 2
 	var b strings.Builder
 	b.WriteString(renderGradientText(title, coolRamp))
