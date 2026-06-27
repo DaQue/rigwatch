@@ -6,15 +6,19 @@ Monitor CPU, GPU, RAM, and disk usage on your remote servers with a live-updatin
 
 ### Pre-built Binaries
 
-Download the latest release for your platform from the [Releases page](https://github.com/allisonhere/rigwatch/releases).
-
 **Quick install (Linux/macOS):**
 ```bash
-# Download the latest binary for your platform (example: Linux AMD64).
-# -f makes curl fail on a 404 instead of saving the error page as "rigwatch".
-curl -fL -o rigwatch https://github.com/allisonhere/rigwatch/releases/latest/download/rigwatch-linux-amd64
+curl -fsSL https://raw.githubusercontent.com/allisonhere/rigwatch/master/install.sh | sh
+```
 
-# Make it executable and move to PATH
+This auto-detects your OS/architecture, downloads the latest release binary, and installs it to your PATH. Override the install location with `RIGWATCH_INSTALL=~/bin` or pin a version with `RIGWATCH_VERSION=v0.0.10`.
+
+**Manual download:**
+
+Grab the binary for your platform from the [Releases page](https://github.com/allisonhere/rigwatch/releases), or:
+```bash
+# Example: Linux AMD64. -f makes curl fail on a 404 instead of saving the error page.
+curl -fL -o rigwatch https://github.com/allisonhere/rigwatch/releases/latest/download/rigwatch-linux-amd64
 chmod +x rigwatch
 sudo mv rigwatch /usr/local/bin/
 ```
