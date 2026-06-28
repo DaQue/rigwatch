@@ -528,13 +528,16 @@ func renderDiskIOSection(diskIO []internal.DiskIOInfo, width int) string {
 	b.WriteString(fmt.Sprintf("TOTAL  %s %s   %s %s\n",
 		mutedStyle.Render("R"), accentStyle.Render(formatBytesPerSecond(totalRead)),
 		mutedStyle.Render("W"), accentStyle.Render(formatBytesPerSecond(totalWrite))))
-	b.WriteString(mutedStyle.Render(fmt.Sprintf("%-12s  %-11s  %-11s", "DEVICE", "READ", "WRITE")))
+	b.WriteString(mutedStyle.Render(fmt.Sprintf("%-10s  %-11s  %-11s", "DEVICE", "READ", "WRITE")))
+	barWidth := clampInt(width-39, 4, 32)
+	maxRate := 500.0 * 1024 * 1024 // 500 MB/s ceiling for the per-device bar
 	limit := min(len(busiest), 3)
 	for i := 0; i < limit; i++ {
 		dev := busiest[i]
+		pct := math.Min(100, float64(dev.ReadBps+dev.WriteBps)/maxRate*100)
 		b.WriteString("\n")
-		b.WriteString(fmt.Sprintf("%-12s  %-11s  %-11s",
-			truncateVisible(dev.Device, 12), formatBytesPerSecond(dev.ReadBps), formatBytesPerSecond(dev.WriteBps)))
+		b.WriteString(fmt.Sprintf("%-10s  %-11s  %-11s %s",
+			truncateVisible(dev.Device, 10), formatBytesPerSecond(dev.ReadBps), formatBytesPerSecond(dev.WriteBps), renderThinLineGraph(pct, barWidth)))
 	}
 	return renderPanel("DISK I/O", b.String(), width)
 }

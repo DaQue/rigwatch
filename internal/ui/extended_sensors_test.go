@@ -58,6 +58,20 @@ func TestExtendedGridShowsMultipleProcessRows(t *testing.T) {
 	}
 }
 
+func TestDiskIOSectionRendersPerDeviceBar(t *testing.T) {
+	diskIO := []internal.DiskIOInfo{
+		{Device: "nvme0n1", ReadBps: 80 * 1024 * 1024, WriteBps: 20 * 1024 * 1024},
+	}
+	got := renderDiskIOSection(diskIO, 60)
+	if !strings.Contains(got, "nvme0n1") {
+		t.Fatalf("missing device row:\n%s", got)
+	}
+	// renderThinLineGraph draws with ─/━ glyphs; the row must include a bar.
+	if !strings.ContainsAny(got, "─━") {
+		t.Fatalf("disk I/O row missing graph bar:\n%s", got)
+	}
+}
+
 func TestCompactGridOmitsExtraSensors(t *testing.T) {
 	got := renderMetricsGrid(extendedSampleInfo(), metricHistory{}, 160, false)
 	for _, unwanted := range []string{"SWAP", "LOAD AVG", "DISK I/O", "FANS"} {
