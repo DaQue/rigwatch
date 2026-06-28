@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -54,6 +55,35 @@ func (m Model) renderConnectingProgress() string {
 	b.WriteString("\n")
 	b.WriteString(mutedStyle.Render("Press q to abort. Signal sweep is cosmetic; metric refresh remains on your configured interval."))
 	return b.String()
+}
+
+// renderSingleHostTile renders one host as a single full-screen quad-style pane,
+// so the single-host view matches the grid's tile look (themed border, mirrored
+// sections, gradient fill) instead of a bare metrics grid.
+func (m Model) renderSingleHostTile(host internal.SSHHost, indicator string) string {
+	var b strings.Builder
+
+	navHint := ""
+	if len(m.selectedHosts) > 1 {
+		navHint = "  •  n next  •  t overview  •  g grid"
+	}
+	lastUpdate := m.lastUpdates[host.Name]
+	subtitle := fmt.Sprintf("v%s  •  refreshed %s  •  interval %s%s  •  s shell  •  c add hosts  •  q quit",
+		internal.ShortVersion(), lastUpdate.Format("15:04:05"), formatInterval(m.updateInterval), navHint)
+
+	header := renderHeroHeader("RIGWATCH // "+host.Name+indicator, subtitle, m.width, m.animationFrame)
+	b.WriteString(header)
+	b.WriteString("\n\n")
+
+	// Give the pane all the room left below the header (minus its own border).
+	bodyLines := max(4, m.height-countRenderedLines(header)-3)
+	b.WriteString(m.renderHostPane(host, m.width, bodyLines, false, true))
+
+	out := b.String()
+	if m.height > 0 {
+		out = clampToHeight(out, m.height)
+	}
+	return out
 }
 
 func (m Model) renderOverview() string {
@@ -151,7 +181,7 @@ func renderDashboardWithHistory(hostName string, info *internal.SystemInfo, hist
 	b.WriteString(header)
 	b.WriteString("\n\n")
 
-	b.WriteString(renderMetricsGrid(info.CPU, info.GPUs, info.RAM, info.Disk, info.Temps, info.Network, info.Processes, history, width))
+	b.WriteString(renderMetricsGrid(info, history, width, false))
 
 	out := b.String()
 	// Hard guard: never emit more rows than the terminal has, so a tall host
@@ -174,45 +204,76 @@ func clampToHeight(s string, height int) string {
 	return strings.Join(lines[:height], "\n")
 }
 
-func renderMetricsGrid(cpu internal.CPUInfo, gpus []internal.GPUInfo, ram internal.RAMInfo, disks []internal.DiskInfo, temps []internal.TemperatureInfo, network []internal.NetworkInfo, processes []internal.ProcessInfo, history metricHistory, width int) string {
+// renderMetricsGrid lays out the metric panels. When extended is true (single-
+// host view only) it also includes the swap, load-average, disk-I/O and fan
+// panels; when false the output is identical to the compact quad layout.
+func renderMetricsGrid(info *internal.SystemInfo, history metricHistory, width int, extended bool) string {
+	cpu, gpus, ram := info.CPU, info.GPUs, info.RAM
+	disks, temps, network, processes := info.Disk, info.Temps, info.Network, info.Processes
+
 	if width >= 156 {
 		cardWidth := clampInt((width-8)/3, 46, 68)
-		leftColumn := renderCPUSectionWithHistory(cpu, history.CPU, cardWidth) + "\n" +
-			renderDiskSection(disks, cardWidth)
-		middleColumn := renderGPUSummarySectionWithHistory(gpus, history.GPU, history.VRAM, cardWidth) + "\n" +
-			renderRAMSectionWithHistory(ram, history.RAM, cardWidth) + "\n" +
-			renderTemperatureSection(temps, gpus, history.Temp, cardWidth)
-		rightColumn := renderNetworkSection(network, history.Network, cardWidth) + "\n" +
-			renderProcessSection(processes, cardWidth)
-		return joinGridCells([]string{leftColumn, middleColumn, rightColumn}) + "\n"
+		left := []string{
+			renderCPUSectionWithHistory(cpu, history.CPU, cardWidth),
+			renderDiskSection(disks, cardWidth),
+		}
+		middle := []string{
+			renderGPUSummarySectionWithHistory(gpus, history.GPU, history.VRAM, cardWidth),
+			renderRAMSectionWithHistory(ram, history.RAM, cardWidth),
+			renderTemperatureSection(temps, gpus, history.Temp, cardWidth),
+		}
+		right := []string{renderNetworkSection(network, history.Network, cardWidth)}
+		if extended {
+			left = append(left, renderDiskIOSection(info.DiskIO, cardWidth))
+			middle = append(middle, renderSwapSection(info.Swap, cardWidth))
+			right = append(right, renderLoadSection(info.Load, cardWidth), renderFanSection(info.Fans, cardWidth))
+		}
+		right = append(right, renderProcessSection(processes, cardWidth))
+		return joinGridCells([]string{strings.Join(left, "\n"), strings.Join(middle, "\n"), strings.Join(right, "\n")}) + "\n"
 	}
 
 	if width >= 104 {
 		cardWidth := clampInt((width-6)/2, 46, 68)
 		leftWidth := clampInt(cardWidth-2, 38, 120)
-		cpuPanel := renderCPUSectionWithHistory(cpu, history.CPU, cardWidth)
-		diskPanel := renderDiskSection(disks, leftWidth)
-		networkPanel := renderNetworkSection(network, history.Network, leftWidth)
-		leftColumn := cpuPanel + "\n" + diskPanel + "\n" + networkPanel
-
-		gpuPanel := renderGPUSummarySectionWithHistory(gpus, history.GPU, history.VRAM, cardWidth)
-		ramPanel := renderRAMSectionWithHistory(ram, history.RAM, cardWidth)
-		tempPanel := renderTemperatureSection(temps, gpus, history.Temp, cardWidth)
-		rightPrefix := gpuPanel + "\n" + ramPanel + "\n" + tempPanel
+		left := []string{
+			renderCPUSectionWithHistory(cpu, history.CPU, cardWidth),
+			renderDiskSection(disks, leftWidth),
+			renderNetworkSection(network, history.Network, leftWidth),
+		}
+		rightPrefixPanels := []string{
+			renderGPUSummarySectionWithHistory(gpus, history.GPU, history.VRAM, cardWidth),
+			renderRAMSectionWithHistory(ram, history.RAM, cardWidth),
+			renderTemperatureSection(temps, gpus, history.Temp, cardWidth),
+		}
+		if extended {
+			left = append(left, renderDiskIOSection(info.DiskIO, leftWidth))
+			rightPrefixPanels = append(rightPrefixPanels, renderSwapSection(info.Swap, cardWidth), renderLoadSection(info.Load, cardWidth), renderFanSection(info.Fans, cardWidth))
+		}
+		leftColumn := strings.Join(left, "\n")
+		rightPrefix := strings.Join(rightPrefixPanels, "\n")
 		processRows := max(1, countRenderedLines(leftColumn)-countRenderedLines(rightPrefix)-2)
-		processPanel := renderProcessSectionWithRows(processes, cardWidth, processRows)
-		rightColumn := rightPrefix + "\n" + processPanel
+		rightColumn := rightPrefix + "\n" + renderProcessSectionWithRows(processes, cardWidth, processRows)
 		return lipgloss.JoinHorizontal(lipgloss.Top, leftColumn, "    ", rightColumn) + "\n"
 	}
 
 	cardWidth := clampInt(width-2, 42, 90)
-	return renderCPUSectionWithHistory(cpu, history.CPU, cardWidth) + "\n" +
-		renderGPUSummarySectionWithHistory(gpus, history.GPU, history.VRAM, cardWidth) + "\n" +
-		renderRAMSectionWithHistory(ram, history.RAM, cardWidth) + "\n" +
-		renderTemperatureSection(temps, gpus, history.Temp, cardWidth) + "\n" +
-		renderDiskSection(disks, cardWidth) + "\n" +
-		renderNetworkSection(network, history.Network, cardWidth) + "\n" +
-		renderProcessSection(processes, cardWidth) + "\n"
+	stack := []string{
+		renderCPUSectionWithHistory(cpu, history.CPU, cardWidth),
+		renderGPUSummarySectionWithHistory(gpus, history.GPU, history.VRAM, cardWidth),
+		renderRAMSectionWithHistory(ram, history.RAM, cardWidth),
+		renderTemperatureSection(temps, gpus, history.Temp, cardWidth),
+		renderDiskSection(disks, cardWidth),
+		renderNetworkSection(network, history.Network, cardWidth),
+	}
+	if extended {
+		stack = append(stack,
+			renderSwapSection(info.Swap, cardWidth),
+			renderLoadSection(info.Load, cardWidth),
+			renderDiskIOSection(info.DiskIO, cardWidth),
+			renderFanSection(info.Fans, cardWidth))
+	}
+	stack = append(stack, renderProcessSection(processes, cardWidth))
+	return strings.Join(stack, "\n") + "\n"
 }
 
 func renderCPUSectionWithHistory(cpu internal.CPUInfo, history []float64, width int) string {
@@ -399,6 +460,81 @@ func renderNetworkSection(network []internal.NetworkInfo, history []float64, wid
 		}
 	}
 	return renderPanel("NETWORK I/O", b.String(), width)
+}
+
+func renderSwapSection(swap internal.SwapInfo, width int) string {
+	var b strings.Builder
+	if swap.Total > 0 {
+		usedGB := float64(swap.Used) / 1024.0
+		totalGB := float64(swap.Total) / 1024.0
+		b.WriteString(fmt.Sprintf("%.1f GB / %.1f GB (%.1f%%)\n", usedGB, totalGB, swap.UsagePercent))
+		b.WriteString(renderNeonProgressBar(swap.UsagePercent, metricBarWidth(width-8)))
+	} else {
+		b.WriteString(mutedStyle.Render("no swap configured"))
+	}
+	return renderPanel("SWAP", b.String(), width)
+}
+
+func renderLoadSection(load internal.LoadInfo, width int) string {
+	var b strings.Builder
+	b.WriteString(mutedStyle.Render(fmt.Sprintf("%-7s %-7s %-7s", "1 MIN", "5 MIN", "15 MIN")))
+	b.WriteString("\n")
+	b.WriteString(fmt.Sprintf("%-7s %-7s %-7s",
+		accentStyle.Render(fmt.Sprintf("%.2f", load.Load1)),
+		fmt.Sprintf("%.2f", load.Load5),
+		fmt.Sprintf("%.2f", load.Load15)))
+	if load.Total > 0 {
+		b.WriteString("\n")
+		b.WriteString(mutedStyle.Render(fmt.Sprintf("%d running / %d total tasks", load.Running, load.Total)))
+	}
+	return renderPanel("LOAD AVG", b.String(), width)
+}
+
+func renderDiskIOSection(diskIO []internal.DiskIOInfo, width int) string {
+	if len(diskIO) == 0 {
+		return renderPanel("DISK I/O", mutedStyle.Render("disk I/O warming up"), width)
+	}
+
+	// Aggregate totals, and surface the busiest devices.
+	var totalRead, totalWrite uint64
+	for _, dev := range diskIO {
+		totalRead += dev.ReadBps
+		totalWrite += dev.WriteBps
+	}
+
+	busiest := make([]internal.DiskIOInfo, len(diskIO))
+	copy(busiest, diskIO)
+	sort.Slice(busiest, func(i, j int) bool {
+		return busiest[i].ReadBps+busiest[i].WriteBps > busiest[j].ReadBps+busiest[j].WriteBps
+	})
+
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("TOTAL  %s %s   %s %s\n",
+		mutedStyle.Render("R"), accentStyle.Render(formatBytesPerSecond(totalRead)),
+		mutedStyle.Render("W"), accentStyle.Render(formatBytesPerSecond(totalWrite))))
+	b.WriteString(mutedStyle.Render(fmt.Sprintf("%-12s  %-11s  %-11s", "DEVICE", "READ", "WRITE")))
+	limit := min(len(busiest), 3)
+	for i := 0; i < limit; i++ {
+		dev := busiest[i]
+		b.WriteString("\n")
+		b.WriteString(fmt.Sprintf("%-12s  %-11s  %-11s",
+			truncateVisible(dev.Device, 12), formatBytesPerSecond(dev.ReadBps), formatBytesPerSecond(dev.WriteBps)))
+	}
+	return renderPanel("DISK I/O", b.String(), width)
+}
+
+func renderFanSection(fans []internal.FanInfo, width int) string {
+	if len(fans) == 0 {
+		return renderPanel("FANS", mutedStyle.Render("no fans detected"), width)
+	}
+	var b strings.Builder
+	for i, fan := range fans {
+		if i != 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(fmt.Sprintf("%-18s %s", truncateVisible(fan.Name, 18), accentStyle.Render(fmt.Sprintf("%d RPM", fan.RPM))))
+	}
+	return renderPanel("FANS", b.String(), width)
 }
 
 func renderTemperatureSection(temps []internal.TemperatureInfo, gpus []internal.GPUInfo, history []float64, width int) string {

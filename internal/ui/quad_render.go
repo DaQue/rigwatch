@@ -87,6 +87,12 @@ func (m Model) renderQuadPanel(host internal.SSHHost, width, maxBodyLines int) s
 }
 
 func (m Model) renderQuadPanelWithFocus(host internal.SSHHost, width, maxBodyLines int, focused bool) string {
+	return m.renderHostPane(host, width, maxBodyLines, focused, false)
+}
+
+// renderHostPane renders one host as a themed tile. extended is true only for the
+// single-host view, which adds the swap/load/disk-I/O/fan panels.
+func (m Model) renderHostPane(host internal.SSHHost, width, maxBodyLines int, focused, extended bool) string {
 	theme := m.themeForHost(host.Name)
 	base := theme.Border
 	if focused {
@@ -100,7 +106,7 @@ func (m Model) renderQuadPanelWithFocus(host internal.SSHHost, width, maxBodyLin
 	} else {
 		history := m.metricHistories[host.Name]
 		body = m.renderHostThemed(host.Name, func() string {
-			return renderMetricsGrid(sysInfo.CPU, sysInfo.GPUs, sysInfo.RAM, sysInfo.Disk, sysInfo.Temps, sysInfo.Network, sysInfo.Processes, history, width-2)
+			return renderMetricsGrid(sysInfo, history, width-2, extended)
 		})
 	}
 

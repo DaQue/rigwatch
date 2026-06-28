@@ -17,6 +17,12 @@ type SystemInfo struct {
 	Temps     []TemperatureInfo
 	Network   []NetworkInfo
 	Processes []ProcessInfo
+
+	// Extended sensors (rendered only in single-host view).
+	Swap   SwapInfo
+	Load   LoadInfo
+	DiskIO []DiskIOInfo
+	Fans   []FanInfo
 }
 
 type CPUInfo struct {
@@ -78,6 +84,33 @@ type ProcessInfo struct {
 	MemPercent float64
 }
 
+type SwapInfo struct {
+	Total        int // in MB
+	Used         int // in MB
+	UsagePercent float64
+}
+
+type LoadInfo struct {
+	Load1   float64
+	Load5   float64
+	Load15  float64
+	Running int
+	Total   int
+}
+
+type DiskIOInfo struct {
+	Device     string
+	ReadBytes  uint64 // cumulative counter
+	WriteBytes uint64 // cumulative counter
+	ReadBps    uint64 // derived rate (filled by UI layer)
+	WriteBps   uint64 // derived rate (filled by UI layer)
+}
+
+type FanInfo struct {
+	Name string
+	RPM  int
+}
+
 func GatherSystemInfo(client *SSHClient) (*SystemInfo, error) {
 	info := &SystemInfo{}
 
@@ -112,6 +145,20 @@ func GatherSystemInfo(client *SSHClient) (*SystemInfo, error) {
 
 	if processInfo, err := getProcessInfo(client); err == nil {
 		info.Processes = processInfo
+	}
+
+	// Extended sensors (best-effort; rendered only in single-host view).
+	if swap, err := getSwapInfo(client); err == nil {
+		info.Swap = swap
+	}
+	if load, err := getLoadInfo(client); err == nil {
+		info.Load = load
+	}
+	if diskIO, err := getDiskIOInfo(client); err == nil {
+		info.DiskIO = diskIO
+	}
+	if fans, err := getFanInfo(client); err == nil {
+		info.Fans = fans
 	}
 
 	return info, nil
@@ -409,8 +456,17 @@ func parseHwmonTemps(output string) []TemperatureInfo {
 		"package id 0": true, "core 0": true, "tctl": true,
 		"tccd1": true, "cpu": true, "physical id 0": true,
 	}
+	// Iterate sensor keys in order so the chosen CPU temp is deterministic
+	// (e.g. temp1 "Package id 0" before temp2 "Core 0"), not map-order dependent.
+	keys := make([]string, 0, len(sensors))
+	for key := range sensors {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
 	var temps []TemperatureInfo
-	for _, data := range sensors {
+	for _, key := range keys {
+		data := sensors[key]
 		if !data.hasTemp {
 			continue
 		}
@@ -612,4 +668,165 @@ func parseTopProcesses(output string, limit int) []ProcessInfo {
 		}
 	}
 	return processes
+}
+
+func getSwapInfo(client *SSHClient) (SwapInfo, error) {
+	info := SwapInfo{}
+	output, err := client.ExecuteCommand("free -m | grep -i Swap:")
+	if err != nil {
+		return info, err
+	}
+	parts := strings.Fields(output)
+	if len(parts) >= 3 {
+		if val, err := strconv.Atoi(parts[1]); err == nil {
+			info.Total = val
+		}
+		if val, err := strconv.Atoi(parts[2]); err == nil {
+			info.Used = val
+		}
+		if info.Total > 0 {
+			info.UsagePercent = (float64(info.Used) / float64(info.Total)) * 100
+		}
+	}
+	return info, nil
+}
+
+func getLoadInfo(client *SSHClient) (LoadInfo, error) {
+	output, err := client.ExecuteCommand("cat /proc/loadavg")
+	if err != nil {
+		return LoadInfo{}, err
+	}
+	return parseLoadAvg(output), nil
+}
+
+// parseLoadAvg parses a /proc/loadavg line: "0.52 0.58 0.59 1/523 12345".
+func parseLoadAvg(output string) LoadInfo {
+	info := LoadInfo{}
+	fields := strings.Fields(strings.TrimSpace(output))
+	if len(fields) >= 3 {
+		info.Load1, _ = strconv.ParseFloat(fields[0], 64)
+		info.Load5, _ = strconv.ParseFloat(fields[1], 64)
+		info.Load15, _ = strconv.ParseFloat(fields[2], 64)
+	}
+	if len(fields) >= 4 {
+		if rt := strings.SplitN(fields[3], "/", 2); len(rt) == 2 {
+			info.Running, _ = strconv.Atoi(rt[0])
+			info.Total, _ = strconv.Atoi(rt[1])
+		}
+	}
+	return info
+}
+
+func getDiskIOInfo(client *SSHClient) ([]DiskIOInfo, error) {
+	output, err := client.ExecuteCommand("cat /proc/diskstats")
+	if err != nil {
+		return nil, err
+	}
+	return parseDiskStats(output), nil
+}
+
+// parseDiskStats parses /proc/diskstats. Per the kernel docs the relevant
+// columns are: 3=device name, 6=sectors read, 10=sectors written. Sectors are
+// 512 bytes. Partitions and zero-traffic loop/ram devices are skipped.
+func parseDiskStats(output string) []DiskIOInfo {
+	const sectorSize = 512
+	var stats []DiskIOInfo
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 10 {
+			continue
+		}
+		device := fields[2]
+		if strings.HasPrefix(device, "loop") || strings.HasPrefix(device, "ram") {
+			continue
+		}
+		readSectors, err1 := strconv.ParseUint(fields[5], 10, 64)
+		writeSectors, err2 := strconv.ParseUint(fields[9], 10, 64)
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		stats = append(stats, DiskIOInfo{
+			Device:     device,
+			ReadBytes:  readSectors * sectorSize,
+			WriteBytes: writeSectors * sectorSize,
+		})
+	}
+	return stats
+}
+
+func getFanInfo(client *SSHClient) ([]FanInfo, error) {
+	output, err := client.ExecuteCommand("grep -H . /sys/class/hwmon/hwmon*/fan*_label /sys/class/hwmon/hwmon*/fan*_input 2>/dev/null || true")
+	if err != nil {
+		return nil, err
+	}
+	return parseFans(output), nil
+}
+
+// parseFans parses paired hwmon fan*_label / fan*_input files (same shape as
+// parseHwmonTemps). Fans reporting 0 RPM are omitted.
+func parseFans(output string) []FanInfo {
+	type fanData struct {
+		label string
+		rpm   int
+		hasV  bool
+	}
+	fans := make(map[string]fanData)
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || !strings.Contains(line, ":") {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 2)
+		path, value := parts[0], strings.TrimSpace(parts[1])
+
+		relPath := strings.TrimPrefix(path, "/sys/class/hwmon/")
+		lastSlash := strings.LastIndex(relPath, "/")
+		if lastSlash < 0 {
+			continue
+		}
+		dir := relPath[:lastSlash]
+		file := relPath[lastSlash+1:]
+		if !strings.HasPrefix(file, "fan") {
+			continue
+		}
+		sensorPart := file
+		if idx := strings.IndexAny(sensorPart, "_."); idx >= 0 {
+			sensorPart = sensorPart[:idx]
+		}
+		key := dir + "/" + sensorPart
+
+		data := fans[key]
+		if strings.HasSuffix(path, "_label") {
+			data.label = value
+		} else if strings.HasSuffix(path, "_input") {
+			rpm, err := strconv.Atoi(value)
+			if err != nil {
+				continue
+			}
+			data.rpm = rpm
+			data.hasV = true
+		}
+		fans[key] = data
+	}
+
+	keys := make([]string, 0, len(fans))
+	for key := range fans {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	result := make([]FanInfo, 0, len(keys))
+	for _, key := range keys {
+		data := fans[key]
+		if !data.hasV || data.rpm <= 0 {
+			continue
+		}
+		name := data.label
+		if name == "" {
+			// Fall back to the fanN identifier.
+			name = key[strings.LastIndex(key, "/")+1:]
+		}
+		result = append(result, FanInfo{Name: name, RPM: data.rpm})
+	}
+	return result
 }

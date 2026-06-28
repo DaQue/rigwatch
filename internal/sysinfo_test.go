@@ -170,3 +170,42 @@ func TestParseHwmonTempsReturnsEmptyWhenNoCPUSensor(t *testing.T) {
 		t.Fatalf("hwmon temps = %#v, want empty (no CPU sensor)", got)
 	}
 }
+
+func TestParseLoadAvgParsesAllFields(t *testing.T) {
+	got := parseLoadAvg("0.52 0.58 0.59 2/523 12345\n")
+	if got.Load1 != 0.52 || got.Load5 != 0.58 || got.Load15 != 0.59 {
+		t.Fatalf("load averages = %+v", got)
+	}
+	if got.Running != 2 || got.Total != 523 {
+		t.Fatalf("running/total = %d/%d, want 2/523", got.Running, got.Total)
+	}
+}
+
+func TestParseDiskStatsConvertsSectorsToBytesAndSkipsLoop(t *testing.T) {
+	// fields (0-indexed): 2=name, 5=sectors read, 9=sectors written
+	output := `   8       0 sda 100 0 200 50 80 0 400 30 0 0
+   7       0 loop0 1 0 2 0 3 0 4 0 0 0`
+	got := parseDiskStats(output)
+	if len(got) != 1 {
+		t.Fatalf("expected loop device skipped, got %d devices: %+v", len(got), got)
+	}
+	if got[0].Device != "sda" {
+		t.Fatalf("device = %q", got[0].Device)
+	}
+	if got[0].ReadBytes != 200*512 || got[0].WriteBytes != 400*512 {
+		t.Fatalf("bytes = r%d w%d, want r%d w%d", got[0].ReadBytes, got[0].WriteBytes, 200*512, 400*512)
+	}
+}
+
+func TestParseFansPairsLabelAndInputAndDropsZero(t *testing.T) {
+	output := `/sys/class/hwmon/hwmon2/fan1_label:CPU Fan
+/sys/class/hwmon/hwmon2/fan1_input:1200
+/sys/class/hwmon/hwmon2/fan2_input:0`
+	got := parseFans(output)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 active fan (zero dropped), got %d: %+v", len(got), got)
+	}
+	if got[0].Name != "CPU Fan" || got[0].RPM != 1200 {
+		t.Fatalf("fan = %+v, want CPU Fan/1200", got[0])
+	}
+}

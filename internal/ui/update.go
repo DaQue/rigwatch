@@ -234,6 +234,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if previous := m.sysInfos[msg.hostName]; previous != nil {
 			elapsed := now.Sub(m.lastUpdates[msg.hostName]).Seconds()
 			msg.info.Network = rateNetworkInterfaces(previous.Network, msg.info.Network, elapsed)
+			msg.info.DiskIO = rateDiskIO(previous.DiskIO, msg.info.DiskIO, elapsed)
 		}
 		m.sysInfos[msg.hostName] = msg.info
 		m.lastUpdates[msg.hostName] = now
@@ -507,6 +508,27 @@ func rateNetworkInterfaces(previous []internal.NetworkInfo, current []internal.N
 		}
 		rated[i].RXBps = uint64(float64(iface.RXBytes-prev.RXBytes) / elapsedSeconds)
 		rated[i].TXBps = uint64(float64(iface.TXBytes-prev.TXBytes) / elapsedSeconds)
+	}
+	return rated
+}
+
+func rateDiskIO(previous []internal.DiskIOInfo, current []internal.DiskIOInfo, elapsedSeconds float64) []internal.DiskIOInfo {
+	if elapsedSeconds <= 0 {
+		return current
+	}
+	previousByDevice := make(map[string]internal.DiskIOInfo, len(previous))
+	for _, dev := range previous {
+		previousByDevice[dev.Device] = dev
+	}
+	rated := make([]internal.DiskIOInfo, len(current))
+	for i, dev := range current {
+		rated[i] = dev
+		prev, ok := previousByDevice[dev.Device]
+		if !ok || dev.ReadBytes < prev.ReadBytes || dev.WriteBytes < prev.WriteBytes {
+			continue
+		}
+		rated[i].ReadBps = uint64(float64(dev.ReadBytes-prev.ReadBytes) / elapsedSeconds)
+		rated[i].WriteBps = uint64(float64(dev.WriteBytes-prev.WriteBytes) / elapsedSeconds)
 	}
 	return rated
 }
