@@ -464,10 +464,10 @@ func renderNetworkSection(network []internal.NetworkInfo, history []float64, wid
 	b.WriteString("\n")
 	limit := min(len(network), 4)
 	barWidth := clampInt(width-39, 4, 32)
-	maxRate := 125.0 * 1024 * 1024 // 125 MB/s ≈ 1 Gbps
+	maxRate := 125.0 * 1024 * 1024 // 125 MB/s ≈ 1 Gbps fills the bar
 	for i := 0; i < limit; i++ {
 		iface := network[i]
-		pct := math.Min(100, float64(iface.RXBps+iface.TXBps)/maxRate*100)
+		pct := ioRatePercent(float64(iface.RXBps+iface.TXBps), maxRate)
 		bar := renderThinLineGraph(pct, barWidth)
 		b.WriteString(fmt.Sprintf("%-10s  %-11s  %-11s %s",
 			truncateVisible(iface.Name, 10), formatBytesPerSecond(iface.RXBps), formatBytesPerSecond(iface.TXBps), bar))
@@ -530,11 +530,11 @@ func renderDiskIOSection(diskIO []internal.DiskIOInfo, width int) string {
 		mutedStyle.Render("W"), accentStyle.Render(formatBytesPerSecond(totalWrite))))
 	b.WriteString(mutedStyle.Render(fmt.Sprintf("%-10s  %-11s  %-11s", "DEVICE", "READ", "WRITE")))
 	barWidth := clampInt(width-39, 4, 32)
-	maxRate := 500.0 * 1024 * 1024 // 500 MB/s ceiling for the per-device bar
+	maxRate := 2.0 * 1024 * 1024 * 1024 // 2 GB/s fills the bar (NVMe-class)
 	limit := min(len(busiest), 3)
 	for i := 0; i < limit; i++ {
 		dev := busiest[i]
-		pct := math.Min(100, float64(dev.ReadBps+dev.WriteBps)/maxRate*100)
+		pct := ioRatePercent(float64(dev.ReadBps+dev.WriteBps), maxRate)
 		b.WriteString("\n")
 		b.WriteString(fmt.Sprintf("%-10s  %-11s  %-11s %s",
 			truncateVisible(dev.Device, 10), formatBytesPerSecond(dev.ReadBps), formatBytesPerSecond(dev.WriteBps), renderThinLineGraph(pct, barWidth)))

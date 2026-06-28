@@ -58,6 +58,24 @@ func TestExtendedGridShowsMultipleProcessRows(t *testing.T) {
 	}
 }
 
+func TestIORatePercentIsVisibleAtModestRates(t *testing.T) {
+	const ceiling = 125 * 1024 * 1024 // 1 Gbps
+	if p := ioRatePercent(0, ceiling); p != 0 {
+		t.Fatalf("idle should be 0%%, got %.1f", p)
+	}
+	// A few MB/s must produce a clearly visible (not ~0) bar — the bug being fixed.
+	if p := ioRatePercent(2*1024*1024, ceiling); p < 40 {
+		t.Fatalf("2 MB/s should be clearly visible, got %.1f%%", p)
+	}
+	// Monotonic and capped.
+	if ioRatePercent(20*1024*1024, ceiling) <= ioRatePercent(2*1024*1024, ceiling) {
+		t.Fatalf("rate scale must be monotonic")
+	}
+	if p := ioRatePercent(10*ceiling, ceiling); p != 100 {
+		t.Fatalf("above ceiling should cap at 100%%, got %.1f", p)
+	}
+}
+
 func TestDiskIOSectionRendersPerDeviceBar(t *testing.T) {
 	diskIO := []internal.DiskIOInfo{
 		{Device: "nvme0n1", ReadBps: 80 * 1024 * 1024, WriteBps: 20 * 1024 * 1024},

@@ -170,6 +170,18 @@ func renderHalfHeightGradientBar(percent float64, width int) string {
 	return b.String()
 }
 
+// ioRatePercent maps a byte/sec throughput onto a 0-100 scale logarithmically,
+// so light traffic (KB/s) still produces a visible bar instead of rounding to
+// empty against a high linear ceiling. ceiling is the rate that fills the bar.
+func ioRatePercent(bytesPerSec float64, ceiling float64) float64 {
+	const floor = 1024.0 // 1 KB/s — below this the bar reads as idle (empty)
+	if bytesPerSec <= floor || ceiling <= floor {
+		return 0
+	}
+	pct := math.Log10(bytesPerSec/floor) / math.Log10(ceiling/floor) * 100
+	return math.Max(0, math.Min(100, pct))
+}
+
 func renderThinLineGraph(percent float64, width int) string {
 	width = clampInt(width, 1, 120)
 	percent = math.Max(0, math.Min(100, percent))
