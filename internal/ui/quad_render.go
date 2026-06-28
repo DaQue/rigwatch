@@ -139,8 +139,11 @@ func gradientFadeToBlack(n, width int, base lipgloss.Color) []string {
 		return nil
 	}
 	width = max(1, width)
+	// Keep the fill very dark: dim the border color heavily so even the top row
+	// is a deep shadow of the theme color rather than the full-bright border.
+	const dim = 0.18
 	ramp := []colorStop{
-		{pos: 0.0, red: hexRed(string(base)), green: hexGreen(string(base)), blue: hexBlue(string(base))},
+		{pos: 0.0, red: hexRed(string(base)) * dim, green: hexGreen(string(base)) * dim, blue: hexBlue(string(base)) * dim},
 		{pos: 1.0, red: 0, green: 0, blue: 0},
 	}
 	bar := strings.Repeat(" ", width)
