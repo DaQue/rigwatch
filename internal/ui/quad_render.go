@@ -77,11 +77,7 @@ func joinGridCells(cells []string) string {
 }
 
 func renderEmptyQuadCell(width, maxBodyLines int) string {
-	lines := make([]string, 0, maxBodyLines)
-	lines = append(lines, mutedStyle.Render("no host"))
-	for len(lines) < maxBodyLines {
-		lines = append(lines, " ")
-	}
+	lines := fitLinesToPane(mutedStyle.Render("no host"), maxBodyLines)
 	return renderPanel("◇", strings.Join(lines, "\n"), width)
 }
 
@@ -107,11 +103,21 @@ func (m Model) renderQuadPanelWithFocus(host internal.SSHHost, width, maxBodyLin
 
 func fitLinesToPane(body string, maxBodyLines int) []string {
 	lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
-	if len(lines) > maxBodyLines {
-		lines = lines[:maxBodyLines]
+	if len(lines) >= maxBodyLines {
+		return lines[:maxBodyLines]
 	}
-	for len(lines) < maxBodyLines {
-		lines = append(lines, " ")
+
+	// Vertically center the content within the pane so it sits evenly inside the
+	// outer border, instead of top-aligned with all the slack dumped below it.
+	pad := maxBodyLines - len(lines)
+	top := pad / 2
+	out := make([]string, 0, maxBodyLines)
+	for i := 0; i < top; i++ {
+		out = append(out, " ")
 	}
-	return lines
+	out = append(out, lines...)
+	for len(out) < maxBodyLines {
+		out = append(out, " ")
+	}
+	return out
 }
