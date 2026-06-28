@@ -47,6 +47,17 @@ func TestExtendedGridIncludesExtraSensors(t *testing.T) {
 	}
 }
 
+func TestExtendedGridShowsMultipleProcessRows(t *testing.T) {
+	// sampleLargeSystemInfo has 8 processes (proc-00..proc-07); the single-host
+	// view must show a real list, not just the panel header.
+	for _, width := range []int{120, 160} { // 2-col and 3-col layouts
+		got := renderMetricsGrid(extendedSampleInfo(), metricHistory{}, width, true)
+		if !strings.Contains(got, "proc-00") || !strings.Contains(got, "proc-04") {
+			t.Fatalf("width %d: extended process panel missing rows (proc-00/proc-04):\n%s", width, got)
+		}
+	}
+}
+
 func TestCompactGridOmitsExtraSensors(t *testing.T) {
 	got := renderMetricsGrid(extendedSampleInfo(), metricHistory{}, 160, false)
 	for _, unwanted := range []string{"SWAP", "LOAD AVG", "DISK I/O", "FANS"} {

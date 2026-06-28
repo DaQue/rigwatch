@@ -204,6 +204,11 @@ func clampToHeight(s string, height int) string {
 	return strings.Join(lines[:height], "\n")
 }
 
+// extendedProcessRows is the process-panel height (header + rows) used in the
+// single-host view, where there is room for a real top-process list instead of
+// the column-balanced count the compact quad layout uses.
+const extendedProcessRows = 9
+
 // renderMetricsGrid lays out the metric panels. When extended is true (single-
 // host view only) it also includes the swap, load-average, disk-I/O and fan
 // panels; when false the output is identical to the compact quad layout.
@@ -228,7 +233,11 @@ func renderMetricsGrid(info *internal.SystemInfo, history metricHistory, width i
 			middle = append(middle, renderSwapSection(info.Swap, cardWidth))
 			right = append(right, renderLoadSection(info.Load, cardWidth), renderFanSection(info.Fans, cardWidth))
 		}
-		right = append(right, renderProcessSection(processes, cardWidth))
+		if extended {
+			right = append(right, renderProcessSectionWithRows(processes, cardWidth, extendedProcessRows))
+		} else {
+			right = append(right, renderProcessSection(processes, cardWidth))
+		}
 		return joinGridCells([]string{strings.Join(left, "\n"), strings.Join(middle, "\n"), strings.Join(right, "\n")}) + "\n"
 	}
 
@@ -252,6 +261,9 @@ func renderMetricsGrid(info *internal.SystemInfo, history metricHistory, width i
 		leftColumn := strings.Join(left, "\n")
 		rightPrefix := strings.Join(rightPrefixPanels, "\n")
 		processRows := max(1, countRenderedLines(leftColumn)-countRenderedLines(rightPrefix)-2)
+		if extended {
+			processRows = extendedProcessRows
+		}
 		rightColumn := rightPrefix + "\n" + renderProcessSectionWithRows(processes, cardWidth, processRows)
 		return lipgloss.JoinHorizontal(lipgloss.Top, leftColumn, "    ", rightColumn) + "\n"
 	}
@@ -272,7 +284,11 @@ func renderMetricsGrid(info *internal.SystemInfo, history metricHistory, width i
 			renderDiskIOSection(info.DiskIO, cardWidth),
 			renderFanSection(info.Fans, cardWidth))
 	}
-	stack = append(stack, renderProcessSection(processes, cardWidth))
+	if extended {
+		stack = append(stack, renderProcessSectionWithRows(processes, cardWidth, extendedProcessRows))
+	} else {
+		stack = append(stack, renderProcessSection(processes, cardWidth))
+	}
 	return strings.Join(stack, "\n") + "\n"
 }
 
