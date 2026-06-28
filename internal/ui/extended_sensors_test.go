@@ -76,6 +76,32 @@ func TestIORatePercentIsVisibleAtModestRates(t *testing.T) {
 	}
 }
 
+func TestFanSectionRendersTrendSparkline(t *testing.T) {
+	fans := []internal.FanInfo{{Name: "CPU Fan", RPM: 1200}}
+	hist := map[string][]float64{"CPU Fan": {600, 800, 1000, 1200}}
+	got := renderFanSection(fans, hist, 60)
+	if !strings.Contains(got, "CPU Fan") || !strings.Contains(got, "1200 RPM") {
+		t.Fatalf("missing fan row:\n%s", got)
+	}
+	// renderSparkline draws with ▁▂▃▄▅▆▇█ glyphs.
+	if !strings.ContainsAny(got, "▁▂▃▄▅▆▇█") {
+		t.Fatalf("fan row missing trend sparkline:\n%s", got)
+	}
+}
+
+func TestAppendMetricHistoryTracksPerFanRPM(t *testing.T) {
+	m := &Model{}
+	info := &internal.SystemInfo{Fans: []internal.FanInfo{{Name: "CPU Fan", RPM: 700}}}
+	m.appendMetricHistory("h1", info)
+	info2 := &internal.SystemInfo{Fans: []internal.FanInfo{{Name: "CPU Fan", RPM: 900}}}
+	m.appendMetricHistory("h1", info2)
+
+	got := m.metricHistories["h1"].Fans["CPU Fan"]
+	if len(got) != 2 || got[0] != 700 || got[1] != 900 {
+		t.Fatalf("per-fan history = %v, want [700 900]", got)
+	}
+}
+
 func TestDiskIOSectionRendersPerDeviceBar(t *testing.T) {
 	diskIO := []internal.DiskIOInfo{
 		{Device: "nvme0n1", ReadBps: 80 * 1024 * 1024, WriteBps: 20 * 1024 * 1024},

@@ -82,6 +82,7 @@ type metricHistory struct {
 	RAM     []float64
 	Temp    []float64
 	Network []float64
+	Fans    map[string][]float64 // RPM history keyed by fan name
 }
 
 type TickMsg time.Time

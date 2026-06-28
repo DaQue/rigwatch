@@ -231,7 +231,7 @@ func renderMetricsGrid(info *internal.SystemInfo, history metricHistory, width i
 		if extended {
 			left = append(left, renderDiskIOSection(info.DiskIO, cardWidth))
 			middle = append(middle, renderSwapSection(info.Swap, cardWidth))
-			right = append(right, renderLoadSection(info.Load, cardWidth), renderFanSection(info.Fans, cardWidth))
+			right = append(right, renderLoadSection(info.Load, cardWidth), renderFanSection(info.Fans, history.Fans, cardWidth))
 		}
 		if extended {
 			right = append(right, renderProcessSectionWithRows(processes, cardWidth, extendedProcessRows))
@@ -256,7 +256,7 @@ func renderMetricsGrid(info *internal.SystemInfo, history metricHistory, width i
 		}
 		if extended {
 			left = append(left, renderDiskIOSection(info.DiskIO, leftWidth))
-			rightPrefixPanels = append(rightPrefixPanels, renderSwapSection(info.Swap, cardWidth), renderLoadSection(info.Load, cardWidth), renderFanSection(info.Fans, cardWidth))
+			rightPrefixPanels = append(rightPrefixPanels, renderSwapSection(info.Swap, cardWidth), renderLoadSection(info.Load, cardWidth), renderFanSection(info.Fans, history.Fans, cardWidth))
 		}
 		leftColumn := strings.Join(left, "\n")
 		rightPrefix := strings.Join(rightPrefixPanels, "\n")
@@ -282,7 +282,7 @@ func renderMetricsGrid(info *internal.SystemInfo, history metricHistory, width i
 			renderSwapSection(info.Swap, cardWidth),
 			renderLoadSection(info.Load, cardWidth),
 			renderDiskIOSection(info.DiskIO, cardWidth),
-			renderFanSection(info.Fans, cardWidth))
+			renderFanSection(info.Fans, history.Fans, cardWidth))
 	}
 	if extended {
 		stack = append(stack, renderProcessSectionWithRows(processes, cardWidth, extendedProcessRows))
@@ -542,16 +542,34 @@ func renderDiskIOSection(diskIO []internal.DiskIOInfo, width int) string {
 	return renderPanel("DISK I/O", b.String(), width)
 }
 
-func renderFanSection(fans []internal.FanInfo, width int) string {
+// maxFanRPM is the full-scale reference for fan trend bars, so bar height tracks
+// RPM level (a steady fan reads flat, a ramping fan trends up).
+const maxFanRPM = 3000.0
+
+func renderFanSection(fans []internal.FanInfo, fanHistory map[string][]float64, width int) string {
 	if len(fans) == 0 {
 		return renderPanel("FANS", mutedStyle.Render("no fans detected"), width)
 	}
+	const nameWidth, rpmWidth = 12, 8 // rpmWidth fits "9999 RPM"
+	sparkWidth := clampInt(width-4-nameWidth-1-rpmWidth-1, 5, 24)
+
 	var b strings.Builder
 	for i, fan := range fans {
 		if i != 0 {
 			b.WriteString("\n")
 		}
-		b.WriteString(fmt.Sprintf("%-18s %s", truncateVisible(fan.Name, 18), accentStyle.Render(fmt.Sprintf("%d RPM", fan.RPM))))
+		spark := emptyBarStyle.Render(strings.Repeat("▁", sparkWidth))
+		if hist := fanHistory[fan.Name]; len(hist) > 1 {
+			norm := make([]float64, len(hist))
+			for j, rpm := range hist {
+				norm[j] = rpm / maxFanRPM * 100
+			}
+			spark = renderSparkline(norm, sparkWidth)
+		}
+		b.WriteString(fmt.Sprintf("%-*s %s %s",
+			nameWidth, truncateVisible(fan.Name, nameWidth),
+			accentStyle.Render(fmt.Sprintf("%4d RPM", fan.RPM)),
+			spark))
 	}
 	return renderPanel("FANS", b.String(), width)
 }

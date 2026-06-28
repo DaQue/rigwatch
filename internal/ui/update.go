@@ -480,6 +480,16 @@ func (m *Model) appendMetricHistory(hostName string, info *internal.SystemInfo) 
 	}
 	history.Network = appendClampedSample(history.Network, networkPercent)
 
+	// Per-fan RPM history for the single-host fan trend bars.
+	if len(info.Fans) > 0 {
+		if history.Fans == nil {
+			history.Fans = make(map[string][]float64, len(info.Fans))
+		}
+		for _, fan := range info.Fans {
+			history.Fans[fan.Name] = appendClampedSample(history.Fans[fan.Name], float64(fan.RPM))
+		}
+	}
+
 	m.metricHistories[hostName] = history
 }
 
