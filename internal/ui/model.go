@@ -31,6 +31,7 @@ type Model struct {
 	currentHostIdx  int
 	list            list.Model
 	spinner         spinner.Model
+	spinnerRunning  bool
 	clients         map[string]*internal.SSHClient
 	sysInfos        map[string]*internal.SystemInfo
 	lastUpdates     map[string]time.Time
@@ -260,10 +261,12 @@ func (m *Model) updateListSelection() {
 }
 
 func (m Model) Init() tea.Cmd {
+	// The spinner tick is started on demand by the animation tick (only while the
+	// spinner is actually visible), so it isn't kicked off here.
 	if m.screen == ScreenConnecting && len(m.selectedHosts) > 0 {
-		return tea.Batch(m.spinner.Tick, animationTick(), m.connectToHosts(), checkForUpdates)
+		return tea.Batch(animationTick(), m.connectToHosts(), checkForUpdates)
 	}
-	return tea.Batch(m.spinner.Tick, animationTick(), checkForUpdates)
+	return tea.Batch(animationTick(), checkForUpdates)
 }
 
 func loadThemePreferencesOrDefault() ThemePreferences {

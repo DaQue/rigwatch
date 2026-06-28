@@ -256,7 +256,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case AnimationTickMsg:
 		m.animationFrame++
-		return m, animationTick()
+		cmds := []tea.Cmd{animationTick()}
+		// Start the spinner's self-tick only while it's actually on screen.
+		if m.spinnerActive() && !m.spinnerRunning {
+			m.spinnerRunning = true
+			cmds = append(cmds, m.spinner.Tick)
+		}
+		return m, tea.Batch(cmds...)
 
 	case hostSavedMsg:
 		if msg.err != nil {
@@ -327,6 +333,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	var spinnerCmd tea.Cmd
 	m.spinner, spinnerCmd = m.spinner.Update(msg)
+	if !m.spinnerActive() {
+		// Spinner is off screen: drop its self-rescheduling tick so we stop
+		// repainting the whole UI while idle. The animation tick restarts it
+		// when the spinner becomes visible again.
+		spinnerCmd = nil
+		m.spinnerRunning = false
+	}
 
 	if m.screen == ScreenHostList {
 		switch m.manageMode {
@@ -347,6 +360,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, spinnerCmd
+}
+
+// spinnerActive reports whether the spinner is currently on screen. It is shown
+// on the connecting screen, the manage "busy" screen, and the dashboard while
+// the current host's telemetry hasn't arrived yet (which falls back to the
+// connecting view). Everywhere else it's hidden, so its tick can be paused.
+func (m Model) spinnerActive() bool {
+	switch m.screen {
+	case ScreenConnecting:
+		return true
+	case ScreenHostList:
+		return m.manageMode == manageBusy
+	case ScreenDashboard:
+		if len(m.selectedHosts) > 0 && m.currentHostIdx < len(m.selectedHosts) {
+			host := m.selectedHosts[m.currentHostIdx]
+			return m.clients[host.Name] == nil || m.sysInfos[host.Name] == nil
+		}
+		return true
+	}
+	return false
 }
 
 func (m *Model) visibleQuadHostCount() int {

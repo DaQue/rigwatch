@@ -78,8 +78,13 @@ func (m Model) tick() tea.Cmd {
 	})
 }
 
+// animationInterval throttles the cosmetic signal-bar animation. Every tick
+// triggers a full re-render, so this is the dominant idle-CPU lever; 250ms
+// (4fps) keeps the shimmer visible while cutting repaints ~2.5x versus 100ms.
+const animationInterval = 250 * time.Millisecond
+
 func animationTick() tea.Cmd {
-	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
+	return tea.Tick(animationInterval, func(t time.Time) tea.Msg {
 		return AnimationTickMsg(t)
 	})
 }
