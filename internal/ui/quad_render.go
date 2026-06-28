@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -86,38 +87,68 @@ func (m Model) renderQuadPanel(host internal.SSHHost, width, maxBodyLines int) s
 }
 
 func (m Model) renderQuadPanelWithFocus(host internal.SSHHost, width, maxBodyLines int, focused bool) string {
-	sysInfo := m.sysInfos[host.Name]
-	if sysInfo == nil {
-		body := fmt.Sprintf("%s\n%s", mutedStyle.Render("awaiting telemetry"), renderSignalBar(width-4, m.animationFrame+len(host.Name)))
-		return m.renderThemedHostPanel(host, focused, body, width)
+	theme := m.themeForHost(host.Name)
+	base := theme.Border
+	if focused {
+		base = theme.FocusColor
 	}
 
-	history := m.metricHistories[host.Name]
-	body := m.renderHostThemed(host.Name, func() string {
-		return renderMetricsGrid(sysInfo.CPU, sysInfo.GPUs, sysInfo.RAM, sysInfo.Disk, sysInfo.Temps, sysInfo.Network, sysInfo.Processes, history, width-2)
-	})
-	lines := fitLinesToPane(body, maxBodyLines)
+	sysInfo := m.sysInfos[host.Name]
+	var body string
+	if sysInfo == nil {
+		body = fmt.Sprintf("%s\n%s", mutedStyle.Render("awaiting telemetry"), renderSignalBar(width-4, m.animationFrame+len(host.Name)))
+	} else {
+		history := m.metricHistories[host.Name]
+		body = m.renderHostThemed(host.Name, func() string {
+			return renderMetricsGrid(sysInfo.CPU, sysInfo.GPUs, sysInfo.RAM, sysInfo.Disk, sysInfo.Temps, sysInfo.Network, sysInfo.Processes, history, width-2)
+		})
+	}
 
+	lines := fitLinesToPaneGradient(body, maxBodyLines, width-2, base)
 	return m.renderThemedHostPanel(host, focused, strings.Join(lines, "\n"), width)
 }
 
+// fitLinesToPane top-aligns content and pads the remaining rows with blanks.
 func fitLinesToPane(body string, maxBodyLines int) []string {
 	lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
 	if len(lines) >= maxBodyLines {
 		return lines[:maxBodyLines]
 	}
+	for len(lines) < maxBodyLines {
+		lines = append(lines, " ")
+	}
+	return lines
+}
 
-	// Vertically center the content within the pane so it sits evenly inside the
-	// outer border, instead of top-aligned with all the slack dumped below it.
-	pad := maxBodyLines - len(lines)
-	top := pad / 2
-	out := make([]string, 0, maxBodyLines)
-	for i := 0; i < top; i++ {
-		out = append(out, " ")
+// fitLinesToPaneGradient top-aligns content and fills the empty space beneath it
+// with a vertical gradient that fades from the active border color down to black,
+// so the slack blends into the themed border instead of being flat black.
+func fitLinesToPaneGradient(body string, maxBodyLines, width int, base lipgloss.Color) []string {
+	lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
+	if len(lines) >= maxBodyLines {
+		return lines[:maxBodyLines]
 	}
-	out = append(out, lines...)
-	for len(out) < maxBodyLines {
-		out = append(out, " ")
+	gap := maxBodyLines - len(lines)
+	return append(lines, gradientFadeToBlack(gap, width, base)...)
+}
+
+// gradientFadeToBlack returns n full-width rows whose background fades from base
+// (top row) to black (bottom row).
+func gradientFadeToBlack(n, width int, base lipgloss.Color) []string {
+	if n <= 0 {
+		return nil
 	}
-	return out
+	width = max(1, width)
+	ramp := []colorStop{
+		{pos: 0.0, red: hexRed(string(base)), green: hexGreen(string(base)), blue: hexBlue(string(base))},
+		{pos: 1.0, red: 0, green: 0, blue: 0},
+	}
+	bar := strings.Repeat(" ", width)
+	denom := math.Max(1, float64(n-1))
+	rows := make([]string, n)
+	for i := 0; i < n; i++ {
+		color := lerpColor(float64(i)/denom, ramp)
+		rows[i] = lipgloss.NewStyle().Background(color).Render(bar)
+	}
+	return rows
 }
