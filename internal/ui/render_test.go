@@ -449,6 +449,15 @@ func TestRenderDashboardTallLayoutStaysComposed(t *testing.T) {
 	}
 }
 
+func TestRenderDashboardNeverExceedsTerminalHeight(t *testing.T) {
+	// A content-heavy host on a short terminal must not run off the bottom border.
+	const height = 24
+	got := renderDashboardWithHistory("test", sampleLargeSystemInfo(), metricHistory{}, time.Second, time.Unix(0, 0), 90, height, false, 0)
+	if lines := countRenderedLines(got); lines > height {
+		t.Fatalf("dashboard rendered %d lines but terminal is only %d tall:\n%s", lines, height, got)
+	}
+}
+
 func TestRenderDashboardPrioritizesCpuAndGpuBeforeRamAndDisk(t *testing.T) {
 	info := &internal.SystemInfo{
 		CPU:  internal.CPUInfo{Model: "CPU", Count: "2", Usage: "50.0%", UsagePercent: 50, Cores: []internal.CPUCoreInfo{{Index: 0, UsagePercent: 25}}},

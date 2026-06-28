@@ -147,13 +147,31 @@ func renderDashboardWithHistory(hostName string, info *internal.SystemInfo, hist
 	subtitle := fmt.Sprintf("v%s  •  refreshed %s  •  interval %s%s  •  s shell  •  c add hosts  •  q quit",
 		internal.ShortVersion(), lastUpdate.Format("15:04:05"), formatInterval(updateInterval), navHint)
 
-	b.WriteString(renderHeroHeader("RIGWATCH // "+hostName, subtitle, width, frame))
+	header := renderHeroHeader("RIGWATCH // "+hostName, subtitle, width, frame)
+	b.WriteString(header)
 	b.WriteString("\n\n")
 
 	b.WriteString(renderMetricsGrid(info.CPU, info.GPUs, info.RAM, info.Disk, info.Temps, info.Network, info.Processes, history, width))
 
-	_ = height
-	return b.String()
+	out := b.String()
+	// Hard guard: never emit more rows than the terminal has, so a tall host
+	// can't run off the bottom border.
+	if height > 0 {
+		out = clampToHeight(out, height)
+	}
+	return out
+}
+
+// clampToHeight trims rendered output so it never exceeds height terminal rows.
+func clampToHeight(s string, height int) string {
+	if height <= 0 {
+		return s
+	}
+	lines := strings.Split(s, "\n")
+	if len(lines) <= height {
+		return s
+	}
+	return strings.Join(lines[:height], "\n")
 }
 
 func renderMetricsGrid(cpu internal.CPUInfo, gpus []internal.GPUInfo, ram internal.RAMInfo, disks []internal.DiskInfo, temps []internal.TemperatureInfo, network []internal.NetworkInfo, processes []internal.ProcessInfo, history metricHistory, width int) string {
