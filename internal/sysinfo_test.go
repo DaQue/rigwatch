@@ -227,3 +227,20 @@ func TestParseFansWithoutLabelsUsesFanID(t *testing.T) {
 		t.Fatalf("fan[1] = %+v, want fan6/2209", got[1])
 	}
 }
+
+// Guards the trap where a new gather command in sysinfo.go is silently rejected
+// because it was never added to isAllowedCommand's allowlist.
+func TestAllowlistCoversExtendedSensorCommands(t *testing.T) {
+	cmds := []string{
+		"cat /proc/loadavg",
+		"cat /proc/diskstats",
+		"free -m | grep -i Swap:",
+		"find -L /sys/class/hwmon -maxdepth 2 \\( -name 'fan*_input' -o -name 'fan*_label' \\) -exec grep -H . {} + 2>/dev/null || true",
+		"find -L /sys/class/hwmon -maxdepth 2 \\( -name 'temp*_input' -o -name 'temp*_label' \\) -exec grep -H . {} + 2>/dev/null || true",
+	}
+	for _, c := range cmds {
+		if !isAllowedCommand(c) {
+			t.Errorf("command issued by sysinfo.go is not allowlisted: %q", c)
+		}
+	}
+}
