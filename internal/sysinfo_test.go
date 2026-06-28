@@ -209,3 +209,21 @@ func TestParseFansPairsLabelAndInputAndDropsZero(t *testing.T) {
 		t.Fatalf("fan = %+v, want CPU Fan/1200", got[0])
 	}
 }
+
+// nct6775 exposes fan*_input with no fan*_label; spinning fans should be named
+// by their fanN identifier and stopped (0 RPM) headers dropped.
+func TestParseFansWithoutLabelsUsesFanID(t *testing.T) {
+	output := `/sys/class/hwmon/hwmon4/fan1_input:0
+/sys/class/hwmon/hwmon4/fan2_input:771
+/sys/class/hwmon/hwmon4/fan6_input:2209`
+	got := parseFans(output)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 spinning fans, got %d: %+v", len(got), got)
+	}
+	if got[0].Name != "fan2" || got[0].RPM != 771 {
+		t.Fatalf("fan[0] = %+v, want fan2/771", got[0])
+	}
+	if got[1].Name != "fan6" || got[1].RPM != 2209 {
+		t.Fatalf("fan[1] = %+v, want fan6/2209", got[1])
+	}
+}

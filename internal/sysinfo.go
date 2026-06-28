@@ -389,7 +389,8 @@ func getTemperatureInfo(client *SSHClient) ([]TemperatureInfo, error) {
 }
 
 func getHwmonCPUTemp(client *SSHClient) ([]TemperatureInfo, error) {
-	output, err := client.ExecuteCommand("grep -H . /sys/class/hwmon/hwmon*/temp*_label /sys/class/hwmon/hwmon*/temp*_input 2>/dev/null || true")
+	// find (not a shell glob) keeps this shell-agnostic — see getFanInfo.
+	output, err := client.ExecuteCommand("find -L /sys/class/hwmon -maxdepth 2 \\( -name 'temp*_input' -o -name 'temp*_label' \\) -exec grep -H . {} + 2>/dev/null || true")
 	if err != nil {
 		return nil, err
 	}
@@ -755,7 +756,10 @@ func parseDiskStats(output string) []DiskIOInfo {
 }
 
 func getFanInfo(client *SSHClient) ([]FanInfo, error) {
-	output, err := client.ExecuteCommand("grep -H . /sys/class/hwmon/hwmon*/fan*_label /sys/class/hwmon/hwmon*/fan*_input 2>/dev/null || true")
+	// Use find (not a shell glob) so the command is shell-agnostic: a zsh login
+	// shell aborts on an unmatched glob, and drivers like nct6775 expose
+	// fan*_input with no fan*_label, which would kill a `grep .../fan*_label`.
+	output, err := client.ExecuteCommand("find -L /sys/class/hwmon -maxdepth 2 \\( -name 'fan*_input' -o -name 'fan*_label' \\) -exec grep -H . {} + 2>/dev/null || true")
 	if err != nil {
 		return nil, err
 	}
