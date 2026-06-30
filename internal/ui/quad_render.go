@@ -16,7 +16,7 @@ func (m Model) renderQuad() string {
 	var b strings.Builder
 
 	total := len(m.selectedHosts)
-	layout := paneLayout(m.width, m.height, total, m.quadPage)
+	layout := paneLayout(m.width, m.height, total, m.quadPage, m.gridTilesPerPage)
 	m.quadPage = clampInt(m.quadPage, 0, layout.Pages-1)
 	m.quadFocus = clampInt(m.quadFocus, 0, max(0, layout.End-layout.Start-1))
 
@@ -28,9 +28,13 @@ func (m Model) renderQuad() string {
 	if m.quadStatus != "" {
 		statusHint = "  •  " + m.quadStatus
 	}
-	subtitle := fmt.Sprintf("v%s  •  refreshed %s  •  interval %s%s  •  t dashboard  •  c add hosts  •  w save layout  •  ? help  •  q quit%s",
+	subtitle := fmt.Sprintf("v%s  •  refreshed %s  •  interval %s%s  •  v modes  •  t dashboard  •  c add hosts  •  w save layout  •  ? help  •  q quit%s",
 		internal.ShortVersion(), time.Now().Format("15:04:05"), formatInterval(m.updateInterval), pageHint, statusHint)
-	b.WriteString(renderHeroHeader("COMMAND CENTER // GRID", subtitle, m.width, m.animationFrame))
+	gridTitle := "COMMAND CENTER // GRID"
+	if m.gridTilesPerPage <= 2 {
+		gridTitle = "COMMAND CENTER // DUAL"
+	}
+	b.WriteString(renderHeroHeader(gridTitle, subtitle, m.width, m.animationFrame))
 	b.WriteString("\n\n")
 
 	for row := 0; row < layout.Rows; row++ {
@@ -112,10 +116,37 @@ func (m Model) renderHostPane(host internal.SSHHost, width, maxBodyLines int, fo
 		body = m.renderHostThemed(host.Name, func() string {
 			return renderMetricsGrid(sysInfo, history, width-2, extended)
 		})
+		// The metric grid uses capped card widths, so on a wide pane it can be
+		// narrower than the available space. Center the block inside the pane so
+		// the slack is balanced left/right instead of pooling on one side.
+		body = centerBlock(body, width-2)
 	}
 
 	lines := fitLinesToPaneGradient(body, maxBodyLines, width-2, base)
 	return m.renderThemedHostPanel(host, focused, strings.Join(lines, "\n"), width)
+}
+
+// centerBlock indents every non-empty line by the same amount so a content block
+// narrower than width sits centered, keeping the columns' relative alignment.
+func centerBlock(s string, width int) string {
+	lines := strings.Split(s, "\n")
+	maxW := 0
+	for _, line := range lines {
+		if w := lipgloss.Width(line); w > maxW {
+			maxW = w
+		}
+	}
+	pad := (width - maxW) / 2
+	if pad <= 0 {
+		return s
+	}
+	prefix := strings.Repeat(" ", pad)
+	for i, line := range lines {
+		if lipgloss.Width(line) > 0 {
+			lines[i] = prefix + line
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // fitLinesToPane top-aligns content and pads the remaining rows with blanks.

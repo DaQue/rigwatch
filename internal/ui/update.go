@@ -42,6 +42,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// The display-mode picker is modal while open.
+		if m.modeMenuOpen {
+			return m.updateModeMenu(msg)
+		}
+
 		// The settings screen owns all key input while it's open.
 		if m.screen == ScreenSettings {
 			return m.updateSettings(msg)
@@ -144,7 +149,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "n":
 			if m.screen == ScreenQuad {
-				layout := paneLayout(m.width, m.height, len(m.selectedHosts), m.quadPage)
+				layout := paneLayout(m.width, m.height, len(m.selectedHosts), m.quadPage, m.gridTilesPerPage)
 				if layout.Pages > 1 {
 					m.quadPage = (m.quadPage + 1) % layout.Pages
 					m.clampQuadFocus()
@@ -159,7 +164,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "p":
 			if m.screen == ScreenQuad {
-				layout := paneLayout(m.width, m.height, len(m.selectedHosts), m.quadPage)
+				layout := paneLayout(m.width, m.height, len(m.selectedHosts), m.quadPage, m.gridTilesPerPage)
 				if layout.Pages > 1 {
 					m.quadPage = (m.quadPage - 1 + layout.Pages) % layout.Pages
 					m.clampQuadFocus()
@@ -185,6 +190,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "[":
 			if m.screen == ScreenQuad {
 				m.cycleFocusedHostTheme(-1)
+			}
+		case "v":
+			if m.screen == ScreenDashboard || m.screen == ScreenOverview || m.screen == ScreenQuad {
+				m.openModeMenu()
+				return m, nil
 			}
 		case "g":
 			switch m.screen {
@@ -434,7 +444,7 @@ func (m Model) spinnerActive() bool {
 }
 
 func (m *Model) visibleQuadHostCount() int {
-	layout := paneLayout(m.width, m.height, len(m.selectedHosts), m.quadPage)
+	layout := paneLayout(m.width, m.height, len(m.selectedHosts), m.quadPage, m.gridTilesPerPage)
 	return max(0, layout.End-layout.Start)
 }
 
@@ -457,7 +467,7 @@ func (m *Model) moveQuadFocus(delta int) {
 }
 
 func (m *Model) focusedQuadHost() (internal.SSHHost, bool) {
-	layout := paneLayout(m.width, m.height, len(m.selectedHosts), m.quadPage)
+	layout := paneLayout(m.width, m.height, len(m.selectedHosts), m.quadPage, m.gridTilesPerPage)
 	if layout.End <= layout.Start {
 		return internal.SSHHost{}, false
 	}
@@ -481,7 +491,7 @@ func (m *Model) saveQuadLayout() {
 	for i, h := range m.selectedHosts {
 		names[i] = h.Name
 	}
-	if err := SaveLayoutPreferences(LayoutPreferences{Hosts: names, Page: m.quadPage}); err != nil {
+	if err := SaveLayoutPreferences(LayoutPreferences{Hosts: names, Page: m.quadPage, TilesPerPage: m.gridTilesPerPage}); err != nil {
 		m.quadStatus = "save failed: " + err.Error()
 		return
 	}

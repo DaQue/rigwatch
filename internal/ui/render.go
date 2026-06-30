@@ -72,7 +72,7 @@ func (m Model) renderSingleHostTile(host internal.SSHHost, indicator string) str
 	if info := m.sysInfos[host.Name]; info != nil && info.Uptime > 0 {
 		uptimeHint = "  •  up " + formatUptime(info.Uptime)
 	}
-	subtitle := fmt.Sprintf("v%s  •  refreshed %s%s  •  interval %s%s  •  s shell  •  c add hosts  •  ? help  •  q quit",
+	subtitle := fmt.Sprintf("v%s  •  refreshed %s%s  •  interval %s%s  •  s shell  •  c add hosts  •  v modes  •  ? help  •  q quit",
 		internal.ShortVersion(), lastUpdate.Format("15:04:05"), uptimeHint, formatInterval(m.updateInterval), navHint)
 
 	header := renderHeroHeader("RIGWATCH // "+host.Name+indicator, subtitle, m.width, m.animationFrame)
@@ -93,14 +93,14 @@ func (m Model) renderSingleHostTile(host internal.SSHHost, indicator string) str
 func (m Model) renderOverview() string {
 	var b strings.Builder
 
-	subtitle := fmt.Sprintf("v%s  •  refreshed %s  •  interval %s  •  t per-host  •  g grid  •  c add hosts  •  ? help  •  q quit",
+	subtitle := fmt.Sprintf("v%s  •  refreshed %s  •  interval %s  •  t per-host  •  g grid  •  c add hosts  •  v modes  •  ? help  •  q quit",
 		internal.ShortVersion(), time.Now().Format("15:04:05"), formatInterval(m.updateInterval))
 	b.WriteString(renderHeroHeader(fmt.Sprintf("COMMAND CENTER // %d HOSTS", len(m.selectedHosts)), subtitle, m.width, m.animationFrame))
 	b.WriteString("\n\n")
 	b.WriteString(m.renderAlertsSummaryLine())
 	b.WriteString("\n")
 
-	layout := paneLayout(m.width, m.height, len(m.selectedHosts), 0)
+	layout := paneLayout(m.width, m.height, len(m.selectedHosts), 0, quadPageSize)
 	for i := 0; i < len(m.selectedHosts); i += layout.PageSize() {
 		cells := make([]string, 0, layout.PageSize())
 		for col := 0; col < layout.PageSize() && i+col < len(m.selectedHosts); col++ {
@@ -180,7 +180,7 @@ func renderDashboardWithHistory(hostName string, info *internal.SystemInfo, hist
 	if multiHost {
 		navHint = "  •  n next  •  t overview  •  g grid"
 	}
-	subtitle := fmt.Sprintf("v%s  •  refreshed %s  •  interval %s%s  •  s shell  •  c add hosts  •  ? help  •  q quit",
+	subtitle := fmt.Sprintf("v%s  •  refreshed %s  •  interval %s%s  •  s shell  •  c add hosts  •  v modes  •  ? help  •  q quit",
 		internal.ShortVersion(), lastUpdate.Format("15:04:05"), formatInterval(updateInterval), navHint)
 
 	header := renderHeroHeader("RIGWATCH // "+hostName, subtitle, width, frame)
@@ -252,7 +252,7 @@ func renderMetricsGrid(info *internal.SystemInfo, history metricHistory, width i
 		cardWidth := clampInt((width-6)/2, 46, 68)
 		leftWidth := clampInt(cardWidth-2, 38, 120)
 		left := []string{
-			renderCPUSectionWithHistory(cpu, history.CPU, cardWidth),
+			renderCPUSectionWithHistory(cpu, history.CPU, leftWidth),
 			renderDiskSection(disks, leftWidth),
 			renderNetworkSection(network, history.Network, leftWidth),
 		}
@@ -334,7 +334,7 @@ func renderCPUSectionWithHistory(cpu internal.CPUInfo, history []float64, width 
 		b.WriteString(renderCoreMiniGraphs(cpu.Cores, width))
 	}
 
-	return renderPanel("CPU LOAD", b.String(), clampInt(width-2, 38, 120))
+	return renderPanel("CPU LOAD", b.String(), width)
 }
 
 func renderCoreMiniGraphs(cores []internal.CPUCoreInfo, width int) string {

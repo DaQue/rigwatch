@@ -16,6 +16,9 @@ import (
 type LayoutPreferences struct {
 	Hosts []string `json:"hosts"`
 	Page  int      `json:"page"`
+	// TilesPerPage is the grid page size (2 = dual, 4 = grid). 0 means unset and
+	// restores to the default grid size.
+	TilesPerPage int `json:"tiles_per_page"`
 }
 
 func layoutPreferencesPath() (string, error) {
@@ -92,5 +95,8 @@ func RestoreModelFromLayout(allHosts []internal.SSHHost, updateInterval time.Dur
 	m := InitialModelWithHosts(allHosts, selected, updateInterval)
 	m.postConnectScreen = ScreenQuad
 	m.quadPage = prefs.Page
+	if prefs.TilesPerPage > 0 {
+		m.gridTilesPerPage = prefs.TilesPerPage
+	}
 	return m, true
 }

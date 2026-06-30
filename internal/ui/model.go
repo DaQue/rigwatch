@@ -47,12 +47,15 @@ type Model struct {
 	metricHistories   map[string]metricHistory
 	quadPage          int
 	quadFocus         int
+	gridTilesPerPage  int    // tiles per page on the grid screen: 2 (dual) or 4 (quad)
 	quadStatus        string // transient feedback for the quad view (e.g. "layout saved")
 	postConnectScreen Screen // screen to land on once the connecting screen finishes
 	themePrefs        ThemePreferences
 	settings          Settings
 	settingsForm      *settingsFormState
 	helpVisible       bool
+	modeMenuOpen      bool // display-mode picker overlay
+	modeMenuIdx       int
 
 	// Connection-manager sub-state (host-list screen only).
 	manageMode         manageMode
@@ -206,6 +209,7 @@ func InitialModel(hosts []internal.SSHHost, updateInterval time.Duration) Model 
 	return Model{
 		screen:            ScreenHostList,
 		postConnectScreen: ScreenDashboard,
+		gridTilesPerPage:  quadPageSize,
 		hosts:             hosts,
 		list:              l,
 		spinner:           s,
@@ -249,6 +253,7 @@ func InitialModelWithHosts(allHosts []internal.SSHHost, selectedHosts []internal
 	return Model{
 		screen:            ScreenConnecting,
 		postConnectScreen: ScreenDashboard,
+		gridTilesPerPage:  quadPageSize,
 		hosts:             allHosts,
 		selectedHosts:     selectedHosts,
 		currentHostIdx:    0,

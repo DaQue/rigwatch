@@ -3,7 +3,7 @@ package ui
 import "testing"
 
 func TestPaneLayoutKeepsQuadAsFourLargeQuadrants(t *testing.T) {
-	layout := paneLayout(220, 70, 10, 0)
+	layout := paneLayout(220, 70, 10, 0, quadPageSize)
 
 	if layout.Columns != 2 || layout.Rows != 2 {
 		t.Fatalf("quad layout = %dx%d, want 2x2", layout.Columns, layout.Rows)
@@ -23,7 +23,7 @@ func TestPaneLayoutKeepsQuadAsFourLargeQuadrants(t *testing.T) {
 }
 
 func TestPaneLayoutUsesTwoLargePanesForTwoHosts(t *testing.T) {
-	layout := paneLayout(220, 70, 2, 0)
+	layout := paneLayout(220, 70, 2, 0, quadPageSize)
 
 	if layout.Columns != 2 || layout.Rows != 1 {
 		t.Fatalf("two-host layout = %dx%d, want 2x1", layout.Columns, layout.Rows)
@@ -37,7 +37,7 @@ func TestPaneLayoutUsesTwoLargePanesForTwoHosts(t *testing.T) {
 }
 
 func TestPaneLayoutStacksTwoHostsOnNarrowTerminals(t *testing.T) {
-	layout := paneLayout(78, 40, 2, 0)
+	layout := paneLayout(78, 40, 2, 0, quadPageSize)
 
 	if layout.Columns != 1 || layout.Rows != 2 {
 		t.Fatalf("narrow two-host layout = %dx%d, want 1x2", layout.Columns, layout.Rows)

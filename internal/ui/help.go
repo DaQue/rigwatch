@@ -32,13 +32,15 @@ func helpGroups() []helpGroup {
 			{"o", "open settings"},
 		}},
 		{"Single host", []helpEntry{
+			{"v", "display-mode picker"},
 			{"n", "next host"},
 			{"t", "overview"},
 			{"g", "grid view"},
 			{"s", "open shell (ssh)"},
 			{"c", "back to host list"},
 		}},
-		{"Grid", []helpEntry{
+		{"Grid / Dual", []helpEntry{
+			{"v", "display-mode picker"},
 			{"n / p", "next / previous page"},
 			{"tab / shift+tab", "move focus"},
 			{"[ / ]", "cycle focused host theme"},
