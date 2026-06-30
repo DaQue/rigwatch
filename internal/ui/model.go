@@ -22,30 +22,36 @@ const (
 	ScreenDashboard
 	ScreenOverview
 	ScreenQuad
+	ScreenSettings
 )
 
 type Model struct {
-	screen          Screen
-	hosts           []internal.SSHHost
-	selectedHosts   []internal.SSHHost
-	currentHostIdx  int
-	list            list.Model
-	spinner         spinner.Model
-	spinnerRunning  bool
-	clients         map[string]*internal.SSHClient
-	sysInfos        map[string]*internal.SystemInfo
-	lastUpdates     map[string]time.Time
-	updateInterval  time.Duration
-	failedHosts     map[string]error
-	width           int
-	height          int
-	sshOnExit       string
-	updateInfo      internal.UpdateInfo
-	animationFrame  int
-	metricHistories map[string]metricHistory
-	quadPage        int
-	quadFocus       int
-	themePrefs      ThemePreferences
+	screen            Screen
+	hosts             []internal.SSHHost
+	selectedHosts     []internal.SSHHost
+	currentHostIdx    int
+	list              list.Model
+	spinner           spinner.Model
+	spinnerRunning    bool
+	clients           map[string]*internal.SSHClient
+	sysInfos          map[string]*internal.SystemInfo
+	lastUpdates       map[string]time.Time
+	updateInterval    time.Duration
+	failedHosts       map[string]error
+	width             int
+	height            int
+	sshOnExit         string
+	updateInfo        internal.UpdateInfo
+	animationFrame    int
+	metricHistories   map[string]metricHistory
+	quadPage          int
+	quadFocus         int
+	quadStatus        string // transient feedback for the quad view (e.g. "layout saved")
+	postConnectScreen Screen // screen to land on once the connecting screen finishes
+	themePrefs        ThemePreferences
+	settings          Settings
+	settingsForm      *settingsFormState
+	helpVisible       bool
 
 	// Connection-manager sub-state (host-list screen only).
 	manageMode         manageMode
@@ -103,8 +109,10 @@ type ConnectedMsg struct {
 }
 
 type hostItem struct {
-	host     internal.SSHHost
-	selected bool
+	host         internal.SSHHost
+	selected     bool
+	severity     Severity
+	hasTelemetry bool
 }
 
 func (h hostItem) FilterValue() string { return h.host.Name }
@@ -112,6 +120,11 @@ func (h hostItem) Title() string {
 	prefix := "  "
 	if h.selected {
 		prefix = "✓ "
+	}
+	// Show a health dot only once telemetry exists, so the picker doesn't imply
+	// "healthy" for hosts that haven't been sampled yet.
+	if h.hasTelemetry {
+		prefix += severityGlyph(h.severity) + " "
 	}
 	return prefix + h.host.Name
 }
@@ -184,17 +197,19 @@ func InitialModel(hosts []internal.SSHHost, updateInterval time.Duration) Model 
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 
 	return Model{
-		screen:          ScreenHostList,
-		hosts:           hosts,
-		list:            l,
-		spinner:         s,
-		clients:         make(map[string]*internal.SSHClient),
-		sysInfos:        make(map[string]*internal.SystemInfo),
-		lastUpdates:     make(map[string]time.Time),
-		failedHosts:     make(map[string]error),
-		metricHistories: make(map[string]metricHistory),
-		updateInterval:  updateInterval,
-		themePrefs:      loadThemePreferencesOrDefault(),
+		screen:            ScreenHostList,
+		postConnectScreen: ScreenDashboard,
+		hosts:             hosts,
+		list:              l,
+		spinner:           s,
+		clients:           make(map[string]*internal.SSHClient),
+		sysInfos:          make(map[string]*internal.SystemInfo),
+		lastUpdates:       make(map[string]time.Time),
+		failedHosts:       make(map[string]error),
+		metricHistories:   make(map[string]metricHistory),
+		updateInterval:    updateInterval,
+		themePrefs:        loadThemePreferencesOrDefault(),
+		settings:          loadSettingsOrDefault(),
 	}
 }
 
@@ -224,19 +239,21 @@ func InitialModelWithHosts(allHosts []internal.SSHHost, selectedHosts []internal
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 
 	return Model{
-		screen:          ScreenConnecting,
-		hosts:           allHosts,
-		selectedHosts:   selectedHosts,
-		currentHostIdx:  0,
-		list:            l,
-		spinner:         s,
-		clients:         make(map[string]*internal.SSHClient),
-		sysInfos:        make(map[string]*internal.SystemInfo),
-		lastUpdates:     make(map[string]time.Time),
-		failedHosts:     make(map[string]error),
-		metricHistories: make(map[string]metricHistory),
-		updateInterval:  updateInterval,
-		themePrefs:      loadThemePreferencesOrDefault(),
+		screen:            ScreenConnecting,
+		postConnectScreen: ScreenDashboard,
+		hosts:             allHosts,
+		selectedHosts:     selectedHosts,
+		currentHostIdx:    0,
+		list:              l,
+		spinner:           s,
+		clients:           make(map[string]*internal.SSHClient),
+		sysInfos:          make(map[string]*internal.SystemInfo),
+		lastUpdates:       make(map[string]time.Time),
+		failedHosts:       make(map[string]error),
+		metricHistories:   make(map[string]metricHistory),
+		updateInterval:    updateInterval,
+		themePrefs:        loadThemePreferencesOrDefault(),
+		settings:          loadSettingsOrDefault(),
 	}
 }
 
@@ -255,6 +272,13 @@ func (m *Model) updateListSelection() {
 	for i, item := range items {
 		if hi, ok := item.(hostItem); ok {
 			hi.selected = selectedMap[hi.host.Name]
+			if info := m.sysInfos[hi.host.Name]; info != nil {
+				hi.hasTelemetry = true
+				hi.severity = m.worstHostSeverity(hi.host.Name)
+			} else {
+				hi.hasTelemetry = false
+				hi.severity = SevOK
+			}
 			newItems[i] = hi
 		}
 	}
@@ -276,4 +300,12 @@ func loadThemePreferencesOrDefault() ThemePreferences {
 		return ThemePreferences{Hosts: make(map[string]string)}
 	}
 	return prefs
+}
+
+func loadSettingsOrDefault() Settings {
+	settings, err := LoadSettings()
+	if err != nil {
+		return DefaultSettings()
+	}
+	return settings
 }

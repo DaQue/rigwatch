@@ -168,7 +168,17 @@ func (p *ThemePreferences) SetHostTheme(hostName, themeName string) {
 }
 
 func (m Model) themeForHost(hostName string) Theme {
+	// A host with no explicit per-host theme uses the configured default theme.
+	if _, ok := m.themePrefs.Hosts[hostName]; !ok && m.settings.DefaultTheme != "" {
+		return ThemeByName(m.settings.DefaultTheme)
+	}
 	return ThemeByName(m.themePrefs.ThemeNameForHost(hostName))
+}
+
+// worstHostSeverity is the highest active alert severity for a host given the
+// current settings, or SevOK when there is no telemetry yet.
+func (m Model) worstHostSeverity(hostName string) Severity {
+	return worstSeverity(m.sysInfos[hostName], m.settings.Thresholds)
 }
 
 func (m Model) renderHostThemed(hostName string, render func() string) string {
@@ -177,18 +187,32 @@ func (m Model) renderHostThemed(hostName string, render func() string) string {
 
 func (m Model) renderThemedHostPanel(host internal.SSHHost, focused bool, body string, width int) string {
 	theme := m.themeForHost(host.Name)
-	title := "◈ " + host.Name
+	sev := m.worstHostSeverity(host.Name)
+	title := severityMarker(sev) + "◈ " + host.Name
 	if focused {
 		title += " [" + theme.Name + "]"
 	}
+
+	// An active alert recolors the whole tile (border + title) so a problem host
+	// stands out at a glance. Severity outranks focus highlighting; a healthy
+	// focused tile keeps the focus color.
+	accent := theme.FocusColor
+	hasAccent := focused
+	switch sev {
+	case SevCrit:
+		accent, hasAccent = theme.Danger, true
+	case SevWarn:
+		accent, hasAccent = theme.Warning, true
+	}
+
 	return renderWithTheme(theme, func() string {
-		if !focused {
+		if !hasAccent {
 			return renderPanel(title, body, width)
 		}
 		originalBorder := panelBorderStyle
 		originalTitle := panelTitleStyle
-		panelBorderStyle = lipgloss.NewStyle().Foreground(theme.FocusColor).Bold(true)
-		panelTitleStyle = lipgloss.NewStyle().Foreground(theme.FocusColor).Bold(true)
+		panelBorderStyle = lipgloss.NewStyle().Foreground(accent).Bold(true)
+		panelTitleStyle = lipgloss.NewStyle().Foreground(accent).Bold(true)
 		defer func() {
 			panelBorderStyle = originalBorder
 			panelTitleStyle = originalTitle

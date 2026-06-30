@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/allisonhere/rigwatch/internal"
@@ -8,6 +9,11 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+// hostListFooterReserve is the number of rows View() appends beneath the host
+// list (selection summary, manage hint, version line). The list is sized to
+// leave this much room so toggling a selection never overflows the screen.
+const hostListFooterReserve = 3
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -24,6 +30,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// While a connection-manager sub-mode is active, all keys feed it.
 		if m.screen == ScreenHostList && m.manageMode != manageNone {
 			return m.updateManage(msg)
+		}
+
+		// The help overlay is modal: while open, ?/esc/q close it and any other
+		// key is swallowed so it can't act on the screen underneath.
+		if m.helpVisible {
+			switch msg.String() {
+			case "?", "esc", "q":
+				m.helpVisible = false
+			}
+			return m, nil
+		}
+
+		// The settings screen owns all key input while it's open.
+		if m.screen == ScreenSettings {
+			return m.updateSettings(msg)
 		}
 
 		// Host-list management shortcuts (suppressed while typing a filter).
@@ -59,10 +80,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, scanHostKeyCmd(item.host)
 				}
 				return m, nil
+			case "o":
+				m.openSettings()
+				return m, textinput.Blink
 			}
 		}
 
 		switch msg.String() {
+		case "?":
+			// Open help, except while typing a host-list filter where "?" is a
+			// literal character (let it fall through to the list).
+			if m.screen == ScreenHostList && m.list.FilterState() == list.Filtering {
+				break
+			}
+			m.helpVisible = true
+			return m, nil
 		case "q":
 			for _, client := range m.clients {
 				if client != nil {
@@ -87,6 +119,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					m.updateListSelection()
 				}
+				// Space is fully handled here; don't let it fall through to the
+				// list (which would re-render and can shift the viewport).
+				return m, nil
 			}
 		case "enter":
 			if m.screen == ScreenHostList {
@@ -118,6 +153,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if layout.Pages > 1 {
 					m.quadPage = (m.quadPage + 1) % layout.Pages
 					m.clampQuadFocus()
+					m.quadStatus = ""
 				}
 			} else if m.screen == ScreenDashboard && len(m.selectedHosts) > 1 {
 				m.currentHostIdx = (m.currentHostIdx + 1) % len(m.selectedHosts)
@@ -132,6 +168,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if layout.Pages > 1 {
 					m.quadPage = (m.quadPage - 1 + layout.Pages) % layout.Pages
 					m.clampQuadFocus()
+					m.quadStatus = ""
 				}
 			}
 		case "tab":
@@ -141,6 +178,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "shift+tab":
 			if m.screen == ScreenQuad {
 				m.moveQuadFocus(-1)
+			}
+		case "w":
+			if m.screen == ScreenQuad {
+				m.saveQuadLayout()
 			}
 		case "]":
 			if m.screen == ScreenQuad {
@@ -193,7 +234,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.list.SetSize(msg.Width, msg.Height-2)
+		// Reserve room for the footer block View() appends below the list
+		// (selection summary + manage hint + version). Without this reserve,
+		// selecting the first host adds the "Selected (N): …" line and pushes
+		// the output one row past the screen, scrolling the whole view.
+		m.list.SetSize(msg.Width, msg.Height-hostListFooterReserve)
 
 	case ConnectedMsg:
 		if msg.err != nil {
@@ -222,7 +267,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.gatherSysInfoForHost(msg.hostName)
 		}
 
-		if m.screen == ScreenDashboard || m.screen == ScreenOverview {
+		if m.screen == ScreenDashboard || m.screen == ScreenOverview || m.screen == ScreenQuad {
 			return m, m.gatherSysInfoForHost(msg.hostName)
 		}
 
@@ -243,7 +288,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.screen == ScreenConnecting && len(m.selectedHosts) > 0 {
 			firstHost := m.selectedHosts[0]
 			if m.clients[firstHost.Name] != nil && m.sysInfos[firstHost.Name] != nil {
-				m.screen = ScreenDashboard
+				m.screen = m.postConnectScreen
+				if m.screen == ScreenHostList || m.screen == ScreenConnecting {
+					m.screen = ScreenDashboard
+				}
 				return m, m.tick()
 			}
 		}
@@ -417,6 +465,25 @@ func (m *Model) focusedQuadHost() (internal.SSHHost, bool) {
 		return internal.SSHHost{}, false
 	}
 	return m.selectedHosts[idx], true
+}
+
+// saveQuadLayout persists the current grid (selected hosts, in order, plus the
+// active page) so it can be restored on the next launch. Feedback is surfaced
+// via quadStatus in the grid subtitle.
+func (m *Model) saveQuadLayout() {
+	if len(m.selectedHosts) == 0 {
+		m.quadStatus = "nothing to save"
+		return
+	}
+	names := make([]string, len(m.selectedHosts))
+	for i, h := range m.selectedHosts {
+		names[i] = h.Name
+	}
+	if err := SaveLayoutPreferences(LayoutPreferences{Hosts: names, Page: m.quadPage}); err != nil {
+		m.quadStatus = "save failed: " + err.Error()
+		return
+	}
+	m.quadStatus = fmt.Sprintf("✓ layout saved (%d hosts)", len(names))
 }
 
 func (m *Model) cycleFocusedHostTheme(delta int) {

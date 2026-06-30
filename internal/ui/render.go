@@ -68,8 +68,12 @@ func (m Model) renderSingleHostTile(host internal.SSHHost, indicator string) str
 		navHint = "  •  n next  •  t overview  •  g grid"
 	}
 	lastUpdate := m.lastUpdates[host.Name]
-	subtitle := fmt.Sprintf("v%s  •  refreshed %s  •  interval %s%s  •  s shell  •  c add hosts  •  q quit",
-		internal.ShortVersion(), lastUpdate.Format("15:04:05"), formatInterval(m.updateInterval), navHint)
+	uptimeHint := ""
+	if info := m.sysInfos[host.Name]; info != nil && info.Uptime > 0 {
+		uptimeHint = "  •  up " + formatUptime(info.Uptime)
+	}
+	subtitle := fmt.Sprintf("v%s  •  refreshed %s%s  •  interval %s%s  •  s shell  •  c add hosts  •  ? help  •  q quit",
+		internal.ShortVersion(), lastUpdate.Format("15:04:05"), uptimeHint, formatInterval(m.updateInterval), navHint)
 
 	header := renderHeroHeader("RIGWATCH // "+host.Name+indicator, subtitle, m.width, m.animationFrame)
 	b.WriteString(header)
@@ -89,10 +93,12 @@ func (m Model) renderSingleHostTile(host internal.SSHHost, indicator string) str
 func (m Model) renderOverview() string {
 	var b strings.Builder
 
-	subtitle := fmt.Sprintf("v%s  •  refreshed %s  •  interval %s  •  t per-host  •  g grid  •  c add hosts  •  q quit",
+	subtitle := fmt.Sprintf("v%s  •  refreshed %s  •  interval %s  •  t per-host  •  g grid  •  c add hosts  •  ? help  •  q quit",
 		internal.ShortVersion(), time.Now().Format("15:04:05"), formatInterval(m.updateInterval))
 	b.WriteString(renderHeroHeader(fmt.Sprintf("COMMAND CENTER // %d HOSTS", len(m.selectedHosts)), subtitle, m.width, m.animationFrame))
 	b.WriteString("\n\n")
+	b.WriteString(m.renderAlertsSummaryLine())
+	b.WriteString("\n")
 
 	layout := paneLayout(m.width, m.height, len(m.selectedHosts), 0)
 	for i := 0; i < len(m.selectedHosts); i += layout.PageSize() {
@@ -174,7 +180,7 @@ func renderDashboardWithHistory(hostName string, info *internal.SystemInfo, hist
 	if multiHost {
 		navHint = "  •  n next  •  t overview  •  g grid"
 	}
-	subtitle := fmt.Sprintf("v%s  •  refreshed %s  •  interval %s%s  •  s shell  •  c add hosts  •  q quit",
+	subtitle := fmt.Sprintf("v%s  •  refreshed %s  •  interval %s%s  •  s shell  •  c add hosts  •  ? help  •  q quit",
 		internal.ShortVersion(), lastUpdate.Format("15:04:05"), formatInterval(updateInterval), navHint)
 
 	header := renderHeroHeader("RIGWATCH // "+hostName, subtitle, width, frame)
@@ -223,12 +229,13 @@ func renderMetricsGrid(info *internal.SystemInfo, history metricHistory, width i
 			renderDiskSection(disks, cardWidth),
 		}
 		middle := []string{
-			renderGPUSummarySectionWithHistory(gpus, history.GPU, history.VRAM, cardWidth),
+			renderGPUSummarySectionWithHistory(gpus, history.GPU, history.VRAM, cardWidth, extended),
 			renderRAMSectionWithHistory(ram, history.RAM, cardWidth),
 			renderTemperatureSection(temps, gpus, history.Temp, cardWidth),
 		}
 		right := []string{renderNetworkSection(network, history.Network, cardWidth)}
 		if extended {
+			left = append([]string{renderAlertsSection(info, cardWidth)}, left...)
 			left = append(left, renderDiskIOSection(info.DiskIO, cardWidth))
 			middle = append(middle, renderSwapSection(info.Swap, cardWidth))
 			right = append(right, renderLoadSection(info.Load, cardWidth), renderFanSection(info.Fans, history.Fans, cardWidth))
@@ -250,11 +257,12 @@ func renderMetricsGrid(info *internal.SystemInfo, history metricHistory, width i
 			renderNetworkSection(network, history.Network, leftWidth),
 		}
 		rightPrefixPanels := []string{
-			renderGPUSummarySectionWithHistory(gpus, history.GPU, history.VRAM, cardWidth),
+			renderGPUSummarySectionWithHistory(gpus, history.GPU, history.VRAM, cardWidth, extended),
 			renderRAMSectionWithHistory(ram, history.RAM, cardWidth),
 			renderTemperatureSection(temps, gpus, history.Temp, cardWidth),
 		}
 		if extended {
+			left = append([]string{renderAlertsSection(info, leftWidth)}, left...)
 			left = append(left, renderDiskIOSection(info.DiskIO, leftWidth))
 			rightPrefixPanels = append(rightPrefixPanels, renderSwapSection(info.Swap, cardWidth), renderLoadSection(info.Load, cardWidth), renderFanSection(info.Fans, history.Fans, cardWidth))
 		}
@@ -271,13 +279,14 @@ func renderMetricsGrid(info *internal.SystemInfo, history metricHistory, width i
 	cardWidth := clampInt(width-2, 42, 90)
 	stack := []string{
 		renderCPUSectionWithHistory(cpu, history.CPU, cardWidth),
-		renderGPUSummarySectionWithHistory(gpus, history.GPU, history.VRAM, cardWidth),
+		renderGPUSummarySectionWithHistory(gpus, history.GPU, history.VRAM, cardWidth, extended),
 		renderRAMSectionWithHistory(ram, history.RAM, cardWidth),
 		renderTemperatureSection(temps, gpus, history.Temp, cardWidth),
 		renderDiskSection(disks, cardWidth),
 		renderNetworkSection(network, history.Network, cardWidth),
 	}
 	if extended {
+		stack = append([]string{renderAlertsSection(info, cardWidth)}, stack...)
 		stack = append(stack,
 			renderSwapSection(info.Swap, cardWidth),
 			renderLoadSection(info.Load, cardWidth),
@@ -309,7 +318,8 @@ func renderCPUSectionWithHistory(cpu internal.CPUInfo, history []float64, width 
 	if cpu.Count != "" {
 		parts = append(parts, fmt.Sprintf("%sc", cpu.Count))
 	}
-	parts = append(parts, accentStyle.Render(cpu.Usage))
+	cpuSev := severityFor(usagePercent, activeThresholds.CPUPct)
+	parts = append(parts, severityStyle(cpuSev, accentStyle).Render(cpu.Usage))
 	b.WriteString(panelTextStyle.Render(strings.Join(parts, "  •  ")))
 	b.WriteString("\n")
 	b.WriteString(renderNeonProgressBar(usagePercent, barWidth))
@@ -351,18 +361,19 @@ func renderCoreMiniGraphs(cores []internal.CPUCoreInfo, width int) string {
 	return strings.Join(rows, "\n")
 }
 
-func renderGPUSummarySectionWithHistory(gpus []internal.GPUInfo, gpuHistory []float64, vramHistory []float64, width int) string {
+func renderGPUSummarySectionWithHistory(gpus []internal.GPUInfo, gpuHistory []float64, vramHistory []float64, width int, extended bool) string {
 	if len(gpus) == 0 {
 		return renderPanel("GPU", mutedStyle.Render("not detected"), clampInt(width, 42, 90))
 	}
 
 	var totalVRAM, usedVRAM int
-	var totalUtil, maxTemp, totalPower int
+	var totalUtil, maxTemp, totalPower, totalPowerLimit int
 	for _, gpu := range gpus {
 		totalVRAM += gpu.VRAMTotal
 		usedVRAM += gpu.VRAMUsed
 		totalUtil += gpu.Utilization
 		totalPower += gpu.PowerDraw
+		totalPowerLimit += gpu.PowerLimit
 		if gpu.Temperature > maxTemp {
 			maxTemp = gpu.Temperature
 		}
@@ -381,12 +392,23 @@ func renderGPUSummarySectionWithHistory(gpus []internal.GPUInfo, gpuHistory []fl
 	}
 
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("%s  util %.0f%%  vram %.0f%%  %dW  %d°C\n", mutedStyle.Render(name), avgUtil, vramPercent, totalPower, maxTemp))
+	utilStr := severityStyle(severityFor(avgUtil, activeThresholds.GPUPct), mutedStyle).Render(fmt.Sprintf("util %.0f%%", avgUtil))
+	tempStr := severityStyle(severityFor(float64(maxTemp), activeThresholds.GPUTempC), mutedStyle).Render(fmt.Sprintf("%d°C", maxTemp))
+	b.WriteString(fmt.Sprintf("%s  %s  vram %.0f%%  %dW  %s\n", mutedStyle.Render(name), utilStr, vramPercent, totalPower, tempStr))
 	b.WriteString(accentStyle.Render("UTIL "))
 	b.WriteString(renderNeonProgressBar(avgUtil, barWidth))
 	b.WriteString("\n")
 	b.WriteString(accentStyle.Render("VRAM "))
 	b.WriteString(renderNeonProgressBar(vramPercent, barWidth))
+	// The power-draw bar is shown only in the roomy single-host (extended) view;
+	// the compact grid keeps the GPU panel short so columns stay aligned.
+	if extended && totalPowerLimit > 0 {
+		powerPct := float64(totalPower) / float64(totalPowerLimit) * 100
+		b.WriteString("\n")
+		b.WriteString(accentStyle.Render("PWR  "))
+		b.WriteString(renderNeonProgressBar(powerPct, barWidth))
+		b.WriteString(mutedStyle.Render(fmt.Sprintf(" %d/%dW", totalPower, totalPowerLimit)))
+	}
 	if len(gpuHistory) > 1 {
 		b.WriteString("\n")
 		b.WriteString(mutedStyle.Render("HIST "))
@@ -408,7 +430,10 @@ func renderRAMSectionWithHistory(ram internal.RAMInfo, history []float64, width 
 	barWidth := metricBarWidth(width - 8)
 
 	if ram.Total > 0 {
-		b.WriteString(fmt.Sprintf("%.1f GB / %.1f GB (%.1f%%)\n", usedGB, totalGB, ram.UsagePercent))
+		ramSev := severityFor(ram.UsagePercent, activeThresholds.RAMPct)
+		line := fmt.Sprintf("%.1f GB / %.1f GB (%.1f%%)", usedGB, totalGB, ram.UsagePercent)
+		b.WriteString(severityStyle(ramSev, panelTextStyle).Render(line))
+		b.WriteString("\n")
 		b.WriteString(renderNeonProgressBar(ram.UsagePercent, barWidth))
 		if len(history) > 1 {
 			b.WriteString("\n")
@@ -443,8 +468,11 @@ func renderDiskSection(disks []internal.DiskInfo, width int) string {
 
 		mount := truncateVisible(disk.MountPoint, mountWidth)
 		size := truncateVisible(fmt.Sprintf("%s/%s", disk.Used, disk.Size), sizeWidth)
-		b.WriteString(fmt.Sprintf("%-*s %-*s %*s %s",
-			mountWidth, mount, sizeWidth, size, percentWidth, disk.UsagePercent, renderThinLineGraph(usagePercent, barWidth)))
+		// Pad before styling so ANSI codes don't throw off the column width.
+		diskSev := severityFor(usagePercent, activeThresholds.DiskPct)
+		pct := severityStyle(diskSev, panelTextStyle).Render(fmt.Sprintf("%*s", percentWidth, disk.UsagePercent))
+		b.WriteString(fmt.Sprintf("%-*s %-*s %s %s",
+			mountWidth, mount, sizeWidth, size, pct, renderThinLineGraph(usagePercent, barWidth)))
 		if i != len(disks)-1 {
 			b.WriteString("\n")
 		}
@@ -483,7 +511,10 @@ func renderSwapSection(swap internal.SwapInfo, width int) string {
 	if swap.Total > 0 {
 		usedGB := float64(swap.Used) / 1024.0
 		totalGB := float64(swap.Total) / 1024.0
-		b.WriteString(fmt.Sprintf("%.1f GB / %.1f GB (%.1f%%)\n", usedGB, totalGB, swap.UsagePercent))
+		swapSev := severityFor(swap.UsagePercent, activeThresholds.SwapPct)
+		line := fmt.Sprintf("%.1f GB / %.1f GB (%.1f%%)", usedGB, totalGB, swap.UsagePercent)
+		b.WriteString(severityStyle(swapSev, panelTextStyle).Render(line))
+		b.WriteString("\n")
 		b.WriteString(renderNeonProgressBar(swap.UsagePercent, metricBarWidth(width-8)))
 	} else {
 		b.WriteString(mutedStyle.Render("no swap configured"))
@@ -600,12 +631,13 @@ func renderTemperatureSection(temps []internal.TemperatureInfo, gpus []internal.
 	for i := 0; i < limit; i++ {
 		temp := temps[i]
 		rawValue := fmt.Sprintf("%-6s", fmt.Sprintf("%.1f°C", temp.Celsius))
-		styledValue := successStyle.Render(rawValue)
-		if temp.Celsius >= 85 {
-			styledValue = dangerStyle.Render(rawValue)
-		} else if temp.Celsius >= 70 {
-			styledValue = warningStyle.Render(rawValue)
+		// GPU sensors use the dedicated GPU temperature thresholds; everything
+		// else uses the general temperature thresholds.
+		tempThreshold := activeThresholds.TempC
+		if strings.HasPrefix(temp.Name, "GPU") {
+			tempThreshold = activeThresholds.GPUTempC
 		}
+		styledValue := severityStyle(severityFor(temp.Celsius, tempThreshold), successStyle).Render(rawValue)
 		pct := math.Min(100, temp.Celsius)
 		bar := renderThinLineGraph(pct, barWidth)
 		b.WriteString(fmt.Sprintf("%-12s  %s %s", truncateVisible(temp.Name, 12), styledValue, bar))
@@ -646,6 +678,24 @@ func countRenderedLines(s string) int {
 		return 0
 	}
 	return len(strings.Split(s, "\n"))
+}
+
+// formatUptime renders a duration compactly: "4d 3h", "3h 12m", or "12m".
+func formatUptime(d time.Duration) string {
+	if d <= 0 {
+		return "0m"
+	}
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	mins := int(d.Minutes()) % 60
+	switch {
+	case days > 0:
+		return fmt.Sprintf("%dd %dh", days, hours)
+	case hours > 0:
+		return fmt.Sprintf("%dh %dm", hours, mins)
+	default:
+		return fmt.Sprintf("%dm", mins)
+	}
 }
 
 func formatBytesPerSecond(bytes uint64) string {

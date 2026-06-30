@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/allisonhere/rigwatch/internal/gpu"
 )
@@ -23,6 +24,9 @@ type SystemInfo struct {
 	Load   LoadInfo
 	DiskIO []DiskIOInfo
 	Fans   []FanInfo
+
+	// Uptime is how long the host has been running (0 if unavailable).
+	Uptime time.Duration
 }
 
 type CPUInfo struct {
@@ -160,8 +164,33 @@ func GatherSystemInfo(client *SSHClient) (*SystemInfo, error) {
 	if fans, err := getFanInfo(client); err == nil {
 		info.Fans = fans
 	}
+	if uptime, err := getUptimeInfo(client); err == nil {
+		info.Uptime = uptime
+	}
 
 	return info, nil
+}
+
+func getUptimeInfo(client *SSHClient) (time.Duration, error) {
+	output, err := client.ExecuteCommand("cat /proc/uptime")
+	if err != nil {
+		return 0, err
+	}
+	return parseUptime(output), nil
+}
+
+// parseUptime reads /proc/uptime, whose first field is the uptime in seconds
+// (e.g. "350735.47 234388.90").
+func parseUptime(output string) time.Duration {
+	fields := strings.Fields(strings.TrimSpace(output))
+	if len(fields) == 0 {
+		return 0
+	}
+	seconds, err := strconv.ParseFloat(fields[0], 64)
+	if err != nil || seconds < 0 {
+		return 0
+	}
+	return time.Duration(seconds * float64(time.Second))
 }
 
 func getCPUInfo(client *SSHClient) (CPUInfo, error) {

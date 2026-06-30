@@ -27,6 +27,14 @@ func (m Model) renderUpdateNotification() string {
 }
 
 func (m Model) View() string {
+	// Keep the render helpers' thresholds in sync with the live settings so
+	// runtime changes (settings screen) take effect immediately.
+	activeThresholds = m.settings.Thresholds
+
+	if m.helpVisible {
+		return m.renderHelp()
+	}
+
 	switch m.screen {
 	case ScreenHostList:
 		switch m.manageMode {
@@ -61,7 +69,7 @@ func (m Model) View() string {
 			footer := fmt.Sprintf("\nSelected (%d): %s", len(m.selectedHosts), strings.Join(selectedNames, ", "))
 			listView += lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Render(footer)
 		}
-		manageHint := "\na add • e edit • d delete • i install key"
+		manageHint := "\na add • e edit • d delete • i install key • o settings"
 		listView += lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(manageHint)
 		versionFooter := fmt.Sprintf("\nv%s", internal.ShortVersion())
 		listView += lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(versionFooter)
@@ -93,6 +101,9 @@ func (m Model) View() string {
 
 	case ScreenQuad:
 		return m.renderQuad() + m.renderUpdateNotification()
+
+	case ScreenSettings:
+		return m.renderSettingsScreen()
 	}
 
 	return ""

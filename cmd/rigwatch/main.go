@@ -67,6 +67,11 @@ func main() {
 				interval = validated
 			}
 		}
+	} else if settings, err := ui.LoadSettings(); err == nil && settings.Interval > 0 {
+		// No flag and no env override: fall back to the persisted interval.
+		if validated := validateInterval(settings.Interval); validated > 0 {
+			interval = validated
+		}
 	}
 
 	// Bootstrap the rigwatch-managed config Include so connection-manager
@@ -106,6 +111,10 @@ func main() {
 		}
 
 		initialModel = ui.InitialModelWithHosts(hosts, selectedHosts, interval)
+	} else if restored, ok := ui.RestoreModelFromLayout(hosts, interval); ok {
+		// No hosts on the command line, but a saved quad layout exists: reconnect
+		// to it and land on the grid.
+		initialModel = restored
 	} else {
 		initialModel = ui.InitialModel(hosts, interval)
 	}

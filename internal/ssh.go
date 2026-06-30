@@ -452,6 +452,7 @@ func isAllowedCommand(cmd string) bool {
 		"cat /proc/net/dev",
 		"cat /proc/loadavg",
 		"cat /proc/diskstats",
+		"cat /proc/uptime",
 		"grep -H . /sys/class/thermal/thermal_zone*/type /sys/class/thermal/thermal_zone*/temp",
 		"grep -H . /sys/class/hwmon/hwmon*/temp*_label /sys/class/hwmon/hwmon*/temp*_input 2>/dev/null || true",
 		"find -L /sys/class/hwmon -maxdepth 2 \\( -name 'temp*_input' -o -name 'temp*_label' \\) -exec grep -H . {} + 2>/dev/null || true",

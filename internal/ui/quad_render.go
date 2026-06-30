@@ -24,8 +24,12 @@ func (m Model) renderQuad() string {
 	if layout.Pages > 1 {
 		pageHint = fmt.Sprintf("  •  page %d/%d  •  n/p page", m.quadPage+1, layout.Pages)
 	}
-	subtitle := fmt.Sprintf("v%s  •  refreshed %s  •  interval %s%s  •  t dashboard  •  c add hosts  •  q quit",
-		internal.ShortVersion(), time.Now().Format("15:04:05"), formatInterval(m.updateInterval), pageHint)
+	statusHint := ""
+	if m.quadStatus != "" {
+		statusHint = "  •  " + m.quadStatus
+	}
+	subtitle := fmt.Sprintf("v%s  •  refreshed %s  •  interval %s%s  •  t dashboard  •  c add hosts  •  w save layout  •  ? help  •  q quit%s",
+		internal.ShortVersion(), time.Now().Format("15:04:05"), formatInterval(m.updateInterval), pageHint, statusHint)
 	b.WriteString(renderHeroHeader("COMMAND CENTER // GRID", subtitle, m.width, m.animationFrame))
 	b.WriteString("\n\n")
 
