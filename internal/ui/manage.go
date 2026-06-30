@@ -45,6 +45,7 @@ func blankFormInputs() []textinput.Model {
 func (m *Model) startAddForm() {
 	m.formInputs = blankFormInputs()
 	m.formOriginalName = ""
+	m.formAuthPassword = false
 	m.manageStatus = ""
 	m.manageErr = false
 	m.manageMode = manageForm
@@ -60,20 +61,27 @@ func (m *Model) startEditForm(host internal.SSHHost) {
 		newFormInput("~/.ssh/id_ed25519 (optional)", host.IdentityFile),
 	}
 	m.formOriginalName = host.Name
+	m.formAuthPassword = host.PasswordAuth
 	m.manageStatus = ""
 	m.manageErr = false
 	m.manageMode = manageForm
 	m.setFormFocus(0)
 }
 
+// formAuthRow is the focus index of the Auth toggle: it sits just past the text
+// inputs, so the form has len(formInputs)+1 focus stops.
+func (m Model) formAuthRow() int { return len(m.formInputs) }
+
 func (m *Model) setFormFocus(i int) {
+	last := m.formAuthRow()
 	if i < 0 {
-		i = len(m.formInputs) - 1
+		i = last
 	}
-	if i >= len(m.formInputs) {
+	if i > last {
 		i = 0
 	}
 	for j := range m.formInputs {
+		// The Auth row (i == last) focuses no text input.
 		if j == i {
 			m.formInputs[j].Focus()
 		} else {
@@ -90,6 +98,7 @@ func (m Model) buildHostFromForm() internal.SSHHost {
 		User:         strings.TrimSpace(m.formInputs[2].Value()),
 		Port:         strings.TrimSpace(m.formInputs[3].Value()),
 		IdentityFile: strings.TrimSpace(m.formInputs[4].Value()),
+		PasswordAuth: m.formAuthPassword,
 		Managed:      true,
 	}
 }
@@ -159,6 +168,15 @@ func (m Model) updateManage(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "shift+tab", "up":
 			m.setFormFocus(m.formFocus - 1)
 			return m, textinput.Blink
+		}
+		// The Auth row is a toggle, not a text field: left/right/space flip it and
+		// all other keys are ignored so they don't leak into a (blurred) input.
+		if m.formFocus == m.formAuthRow() {
+			switch msg.String() {
+			case "left", "right", " ":
+				m.formAuthPassword = !m.formAuthPassword
+			}
+			return m, nil
 		}
 		var cmd tea.Cmd
 		m.formInputs[m.formFocus], cmd = m.formInputs[m.formFocus].Update(msg)

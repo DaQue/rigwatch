@@ -104,6 +104,9 @@ func (m Model) View() string {
 
 	case ScreenSettings:
 		return m.renderSettingsScreen()
+
+	case ScreenPasswordPrompt:
+		return m.renderConnectPasswordPrompt()
 	}
 
 	return ""

@@ -7,10 +7,19 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// withPassword fills in the session-collected password for a password-auth host
+// just before dialing, so the credential lives only on the dial goroutine.
+func (m Model) withPassword(host internal.SSHHost) internal.SSHHost {
+	if host.PasswordAuth {
+		host.Password = m.passwords[host.Name]
+	}
+	return host
+}
+
 func (m Model) connectToHosts() tea.Cmd {
 	var cmds []tea.Cmd
 	for _, host := range m.selectedHosts {
-		h := host
+		h := m.withPassword(host)
 		cmds = append(cmds, func() tea.Msg {
 			client, err := internal.NewSSHClient(h)
 			return ConnectedMsg{hostName: h.Name, client: client, err: err}
@@ -23,9 +32,10 @@ func (m Model) connectToHosts() tea.Cmd {
 }
 
 func (m Model) connectToHost(host internal.SSHHost) tea.Cmd {
+	h := m.withPassword(host)
 	return func() tea.Msg {
-		client, err := internal.NewSSHClient(host)
-		return ConnectedMsg{hostName: host.Name, client: client, err: err}
+		client, err := internal.NewSSHClient(h)
+		return ConnectedMsg{hostName: h.Name, client: client, err: err}
 	}
 }
 
@@ -33,7 +43,7 @@ func (m Model) connectNewHosts() tea.Cmd {
 	var cmds []tea.Cmd
 	for _, host := range m.selectedHosts {
 		if m.clients[host.Name] == nil {
-			h := host
+			h := m.withPassword(host)
 			cmds = append(cmds, func() tea.Msg {
 				client, err := internal.NewSSHClient(h)
 				return ConnectedMsg{hostName: h.Name, client: client, err: err}

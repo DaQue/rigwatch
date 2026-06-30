@@ -23,6 +23,15 @@ type SSHHost struct {
 	IdentityFile string
 	Local        bool
 	Managed      bool
+
+	// PasswordAuth marks a host that authenticates with a password instead of a
+	// key. It is persisted as `PreferredAuthentications password` in the managed
+	// config so the system ssh client honors it too.
+	PasswordAuth bool
+
+	// Password is the in-memory password for a PasswordAuth host, supplied at
+	// connect time. It is never serialized to disk or parsed from config.
+	Password string
 }
 
 type SSHClient struct {
@@ -143,6 +152,8 @@ func parseSSHConfigRecursive(configPath string, visited map[string]bool) ([]SSHH
 				currentHost.Port = value
 			case "identityfile":
 				currentHost.IdentityFile = expandPath(value)
+			case "preferredauthentications":
+				currentHost.PasswordAuth = strings.Contains(strings.ToLower(value), "password")
 			}
 		}
 	}
@@ -356,6 +367,12 @@ func NewSSHClient(host SSHHost) (*SSHClient, error) {
 
 	var authMethods []ssh.AuthMethod
 
+	// Password auth: when a password was supplied for this host it takes priority,
+	// so a password-auth host doesn't stall trying keys the server will reject.
+	if host.Password != "" {
+		authMethods = append(authMethods, passwordAuth(host.Password)...)
+	}
+
 	// First, try the specific identity file from SSH config (highest priority)
 	if host.IdentityFile != "" {
 		if keyAuth, err := publicKeyAuth(host.IdentityFile); err == nil {
@@ -412,6 +429,20 @@ func NewSSHClient(host SSHHost) (*SSHClient, error) {
 		client: client,
 		config: &host,
 	}, nil
+}
+
+// passwordAuth returns the password-based auth methods for a host: the plain
+// password method plus a keyboard-interactive responder that answers every
+// prompt with the same password (covering servers that only offer the latter).
+func passwordAuth(password string) []ssh.AuthMethod {
+	ki := ssh.KeyboardInteractive(func(_, _ string, questions []string, _ []bool) ([]string, error) {
+		answers := make([]string, len(questions))
+		for i := range answers {
+			answers[i] = password
+		}
+		return answers, nil
+	})
+	return []ssh.AuthMethod{ssh.Password(password), ki}
 }
 
 func publicKeyAuth(keyPath string) (ssh.AuthMethod, error) {

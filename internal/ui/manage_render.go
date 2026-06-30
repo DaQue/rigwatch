@@ -24,6 +24,18 @@ func (m Model) renderHostForm() string {
 		}
 		b.WriteString(fmt.Sprintf("%s%-13s %s\n", pointer, formFieldLabels[i], in.View()))
 	}
+
+	// Auth toggle row (key vs password), focusable just past the text inputs.
+	authPointer := "  "
+	if m.formFocus == m.formAuthRow() {
+		authPointer = accentStyle.Render("▸ ")
+	}
+	authValue := "key"
+	if m.formAuthPassword {
+		authValue = "password"
+	}
+	b.WriteString(fmt.Sprintf("%s%-13s %s\n", authPointer, "Auth", accentStyle.Render("‹ "+authValue+" ›")))
+
 	b.WriteString("\n")
 	if m.manageStatus != "" {
 		if m.manageErr {
@@ -33,7 +45,7 @@ func (m Model) renderHostForm() string {
 		}
 		b.WriteString("\n")
 	}
-	b.WriteString(mutedStyle.Render("tab/↑↓ move • enter save • ctrl+t test • ctrl+k save & install key • esc cancel"))
+	b.WriteString(mutedStyle.Render("tab/↑↓ move • ←/→ auth • enter save • ctrl+t test • ctrl+k install key • esc cancel"))
 	return renderPanel(title, b.String(), width)
 }
 

@@ -222,6 +222,9 @@ func serializeHost(h SSHHost) string {
 	if h.IdentityFile != "" {
 		fmt.Fprintf(&b, "    IdentityFile %s\n", h.IdentityFile)
 	}
+	if h.PasswordAuth {
+		fmt.Fprintf(&b, "    PreferredAuthentications password\n")
+	}
 	return b.String()
 }
 

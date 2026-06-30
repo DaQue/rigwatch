@@ -23,6 +23,7 @@ const (
 	ScreenOverview
 	ScreenQuad
 	ScreenSettings
+	ScreenPasswordPrompt
 )
 
 type Model struct {
@@ -65,6 +66,12 @@ type Model struct {
 	pendingHostKey     ssh.PublicKey
 	pendingFingerprint string
 	installAfterSave   bool
+	formAuthPassword   bool // edit-form Auth toggle: password vs key
+
+	// Connect-time password collection (password-auth hosts only).
+	passwords map[string]string // hostName -> password, session-only, never persisted
+	pwQueue   []string          // hosts still needing a password before connecting
+	pwIndex   int               // position within pwQueue
 }
 
 type manageMode int
@@ -206,6 +213,7 @@ func InitialModel(hosts []internal.SSHHost, updateInterval time.Duration) Model 
 		sysInfos:          make(map[string]*internal.SystemInfo),
 		lastUpdates:       make(map[string]time.Time),
 		failedHosts:       make(map[string]error),
+		passwords:         make(map[string]string),
 		metricHistories:   make(map[string]metricHistory),
 		updateInterval:    updateInterval,
 		themePrefs:        loadThemePreferencesOrDefault(),
@@ -250,6 +258,7 @@ func InitialModelWithHosts(allHosts []internal.SSHHost, selectedHosts []internal
 		sysInfos:          make(map[string]*internal.SystemInfo),
 		lastUpdates:       make(map[string]time.Time),
 		failedHosts:       make(map[string]error),
+		passwords:         make(map[string]string),
 		metricHistories:   make(map[string]metricHistory),
 		updateInterval:    updateInterval,
 		themePrefs:        loadThemePreferencesOrDefault(),

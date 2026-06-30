@@ -47,6 +47,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateSettings(msg)
 		}
 
+		// The connect-time password prompt owns all key input while it's open.
+		if m.screen == ScreenPasswordPrompt {
+			return m.updatePasswordPrompt(msg)
+		}
+
 		// Host-list management shortcuts (suppressed while typing a filter).
 		if m.screen == ScreenHostList && m.list.FilterState() != list.Filtering {
 			switch msg.String() {
@@ -131,20 +136,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 				if len(m.selectedHosts) > 0 {
-					m.failedHosts = make(map[string]error)
-
-					hasConnections := len(m.clients) > 0
-
-					if hasConnections {
-						m.screen = ScreenDashboard
-						cmd := m.connectNewHosts()
-						if cmd != nil {
-							return m, cmd
-						}
-					} else {
-						m.screen = ScreenConnecting
-						return m, m.connectToHosts()
-					}
+					// Collect passwords for any password-auth hosts first, then
+					// connect (or connect immediately when none are needed).
+					nm, cmd := m.startConnectFlow()
+					return nm, cmd
 				}
 			}
 		case "n":
@@ -243,6 +238,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ConnectedMsg:
 		if msg.err != nil {
 			m.failedHosts[msg.hostName] = msg.err
+			// Drop a likely-bad password so re-selecting the host re-prompts.
+			delete(m.passwords, msg.hostName)
 
 			for i, h := range m.selectedHosts {
 				if h.Name == msg.hostName {
@@ -393,6 +390,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.screen == ScreenHostList {
 		switch m.manageMode {
 		case manageForm:
+			// The Auth row (focus == len(formInputs)) is a toggle, not a text
+			// input, so there's no input to forward non-key messages to.
+			if m.formFocus >= len(m.formInputs) {
+				return m, spinnerCmd
+			}
 			var cmd tea.Cmd
 			m.formInputs[m.formFocus], cmd = m.formInputs[m.formFocus].Update(msg)
 			return m, tea.Batch(spinnerCmd, cmd)
