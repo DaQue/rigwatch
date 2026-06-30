@@ -326,7 +326,7 @@ func renderCPUSectionWithHistory(cpu internal.CPUInfo, history []float64, width 
 	if len(history) > 1 {
 		b.WriteString("\n")
 		b.WriteString(mutedStyle.Render("TREND "))
-		b.WriteString(renderSparkline(history, barWidth))
+		b.WriteString(renderSparklineThreshold(history, barWidth, activeThresholds.CPUPct))
 	}
 
 	if len(cpu.Cores) > 0 {
@@ -412,7 +412,7 @@ func renderGPUSummarySectionWithHistory(gpus []internal.GPUInfo, gpuHistory []fl
 	if len(gpuHistory) > 1 {
 		b.WriteString("\n")
 		b.WriteString(mutedStyle.Render("HIST "))
-		b.WriteString(renderSparkline(gpuHistory, barWidth))
+		b.WriteString(renderSparklineThreshold(gpuHistory, barWidth, activeThresholds.GPUPct))
 	}
 	if len(vramHistory) > 1 {
 		b.WriteString("\n")
@@ -438,7 +438,7 @@ func renderRAMSectionWithHistory(ram internal.RAMInfo, history []float64, width 
 		if len(history) > 1 {
 			b.WriteString("\n")
 			b.WriteString(mutedStyle.Render("TREND "))
-			b.WriteString(renderSparkline(history, barWidth))
+			b.WriteString(renderSparklineThreshold(history, barWidth, activeThresholds.RAMPct))
 		}
 	} else {
 		b.WriteString(mutedStyle.Render("RAM telemetry unavailable"))
