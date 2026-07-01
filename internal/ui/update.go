@@ -523,8 +523,13 @@ func (m *Model) cycleFocusedHostTheme(delta int) {
 		return
 	}
 	current := m.themePrefs.ThemeNameForHost(host.Name)
-	m.themePrefs.SetHostTheme(host.Name, nextThemeName(current, delta))
-	_ = SaveThemePreferences(m.themePrefs)
+	next := nextThemeName(current, delta)
+	m.themePrefs.SetHostTheme(host.Name, next)
+	if err := SaveThemePreferences(m.themePrefs); err != nil {
+		m.quadStatus = "theme save failed: " + err.Error()
+		return
+	}
+	m.quadStatus = fmt.Sprintf("%s theme: %s", host.Name, next)
 }
 
 func (m *Model) appendMetricHistory(hostName string, info *internal.SystemInfo) {

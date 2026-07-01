@@ -155,11 +155,6 @@ func (h hostItem) Description() string {
 	return ""
 }
 
-func checkForUpdates() tea.Msg {
-	updateInfo := internal.CheckForUpdates()
-	return UpdateCheckMsg(updateInfo)
-}
-
 func censorHostname(hostname string) string {
 	if hostname == "" {
 		return ""
@@ -312,9 +307,9 @@ func (m Model) Init() tea.Cmd {
 	// The spinner tick is started on demand by the animation tick (only while the
 	// spinner is actually visible), so it isn't kicked off here.
 	if m.screen == ScreenConnecting && len(m.selectedHosts) > 0 {
-		return tea.Batch(animationTick(), m.connectToHosts(), checkForUpdates)
+		return tea.Batch(animationTick(), m.connectToHosts(), checkForUpdates(m.settings))
 	}
-	return tea.Batch(animationTick(), checkForUpdates)
+	return tea.Batch(animationTick(), checkForUpdates(m.settings))
 }
 
 func loadThemePreferencesOrDefault() ThemePreferences {

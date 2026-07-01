@@ -562,6 +562,9 @@ func parseThermalZones(output string) []TemperatureInfo {
 		if name == "" {
 			name = key
 		}
+		if isControlThermalZone(name) {
+			continue
+		}
 		if cpuZoneNames[strings.ToLower(name)] || cpuZoneNames[strings.ToLower(key)] {
 			if cpuCount == 0 {
 				name = "CPU"
@@ -573,6 +576,14 @@ func parseThermalZones(output string) []TemperatureInfo {
 		temps = append(temps, TemperatureInfo{Name: name, Celsius: data.celsius})
 	}
 	return temps
+}
+
+// isControlThermalZone reports whether a thermal zone is an ACPI DPTF control
+// node rather than a real temperature sensor. INT3400 is the Intel Dynamic
+// Platform & Thermal Framework manager: it exposes a thermal zone but reports a
+// fixed sentinel value (commonly 20°C), so it's noise in the sensor list.
+func isControlThermalZone(name string) bool {
+	return strings.HasPrefix(strings.ToUpper(strings.TrimSpace(name)), "INT3400")
 }
 
 func thermalZoneKey(path string) string {

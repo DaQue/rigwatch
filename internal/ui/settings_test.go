@@ -35,6 +35,12 @@ func TestSettingsSaveLoadRoundTrip(t *testing.T) {
 	if loaded.ShowExtendedPanels {
 		t.Fatalf("ShowExtendedPanels = true, want false")
 	}
+	if !loaded.CheckForUpdates {
+		t.Fatalf("CheckForUpdates = false, want true")
+	}
+	if loaded.UpdateCheckIntervalHours != 24 {
+		t.Fatalf("UpdateCheckIntervalHours = %d, want 24", loaded.UpdateCheckIntervalHours)
+	}
 
 	path, err := settingsPath()
 	if err != nil {
@@ -62,6 +68,12 @@ func TestLoadSettingsMissingFileReturnsDefaults(t *testing.T) {
 	}
 	if !s.ShowExtendedPanels {
 		t.Fatalf("ShowExtendedPanels default = false, want true")
+	}
+	if !s.CheckForUpdates {
+		t.Fatalf("CheckForUpdates default = false, want true")
+	}
+	if s.UpdateCheckIntervalHours != 24 {
+		t.Fatalf("UpdateCheckIntervalHours default = %d, want 24", s.UpdateCheckIntervalHours)
 	}
 }
 
@@ -91,5 +103,11 @@ func TestLoadSettingsBackfillsPartialFile(t *testing.T) {
 	}
 	if s.Thresholds.DiskPct != (Threshold{Warn: 85, Crit: 95}) {
 		t.Fatalf("disk threshold backfill = %+v, want 85/95", s.Thresholds.DiskPct)
+	}
+	if !s.CheckForUpdates {
+		t.Fatalf("CheckForUpdates should backfill true for partial settings")
+	}
+	if s.UpdateCheckIntervalHours != 24 {
+		t.Fatalf("UpdateCheckIntervalHours = %d, want 24", s.UpdateCheckIntervalHours)
 	}
 }

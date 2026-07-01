@@ -296,6 +296,55 @@ func TestRenderTemperatureSectionShowsSensors(t *testing.T) {
 	}
 }
 
+func TestRenderTemperatureSectionShowsGPUTempInList(t *testing.T) {
+	temps := []internal.TemperatureInfo{{Name: "x86_pkg_temp", Celsius: 55.4}}
+	gpus := []internal.GPUInfo{{Index: "0", Name: "RTX 3070", Temperature: 61}}
+	got := renderTemperatureSection(temps, gpus, nil, 80)
+	for _, want := range []string{"GPU", "61.0°C", "x86_pkg_temp"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("temperature section missing %q: %q", want, got)
+		}
+	}
+}
+
+func TestRenderTemperatureSectionUsesGPUTempWhenNoHwmon(t *testing.T) {
+	gpus := []internal.GPUInfo{{Index: "0", Name: "RTX 3070", Temperature: 61}}
+	got := renderTemperatureSection(nil, gpus, nil, 80)
+	if strings.Contains(got, "unavailable") {
+		t.Fatalf("GPU temp should populate the panel even without hwmon sensors: %q", got)
+	}
+	if !strings.Contains(got, "61.0°C") {
+		t.Fatalf("temperature section missing GPU temp: %q", got)
+	}
+}
+
+func TestRenderTemperatureSectionShowsTrend(t *testing.T) {
+	temps := []internal.TemperatureInfo{{Name: "x86_pkg_temp", Celsius: 55.4}}
+	history := []float64{40, 45, 50, 61}
+	got := renderTemperatureSection(temps, nil, history, 80)
+	if !strings.Contains(got, "TREND") {
+		t.Fatalf("temperature section missing trend sparkline: %q", got)
+	}
+}
+
+func TestRenderGPUSectionShowsTemperature(t *testing.T) {
+	gpus := []internal.GPUInfo{{Index: "0", Name: "RTX Test", VRAMTotal: 24000, VRAMUsed: 12000, Utilization: 65, PowerDraw: 250, PowerLimit: 350, Temperature: 70}}
+	got := renderGPUSummarySectionWithHistory(gpus, nil, nil, 80, false)
+	if !strings.Contains(got, "70°C") {
+		t.Fatalf("GPU section should render temperature inline: %q", got)
+	}
+}
+
+func TestRenderGPUSectionShowsUtilAndVRAM(t *testing.T) {
+	gpus := []internal.GPUInfo{{Index: "0", Name: "RTX Test", VRAMTotal: 24000, VRAMUsed: 12000, Utilization: 65, PowerDraw: 250}}
+	got := renderGPUSummarySectionWithHistory(gpus, nil, nil, 80, false)
+	for _, want := range []string{"util 65%", "vram 50%", "UTIL", "VRAM"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("GPU section missing %q: %q", want, got)
+		}
+	}
+}
+
 func TestRenderProcessSectionShowsTopProcesses(t *testing.T) {
 	processes := []internal.ProcessInfo{{PID: 1234, Command: "postgres", CPUPercent: 42.5, MemPercent: 12.3}}
 	got := renderProcessSection(processes, 80)

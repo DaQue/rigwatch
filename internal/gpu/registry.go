@@ -3,17 +3,17 @@ package gpu
 import "github.com/allisonhere/rigwatch/internal/gpu/base"
 
 // the list of all available GPU providers
-// They will be checked in order, and the first one that detects
-// its tooling on the host will be used
-// TODO: add support for multiple providers per host
+// Every detected provider is queried so mixed-vendor hosts can report all GPUs.
 var providers = []base.Provider{
 	NvidiaProvider{},
 	AMDProvider{},
 }
 
-// attempt to detect and query GPUs from all registered providers
-// Returns the first successful result, or empty if no GPUs are found
+// QueryAll detects and queries all registered GPU providers.
+// Providers that fail are skipped so one broken vendor tool does not hide GPUs
+// reported by another provider.
 func QueryAll(runCmd base.RunCmdFunc) ([]base.Device, error) {
+	var all []base.Device
 	for _, p := range providers {
 		if p.Detect(runCmd) {
 			devices, err := p.Query(runCmd)
@@ -21,12 +21,14 @@ func QueryAll(runCmd base.RunCmdFunc) ([]base.Device, error) {
 				continue
 			}
 			if len(devices) > 0 {
-				return devices, nil
+				all = append(all, devices...)
 			}
 		}
 	}
-	// no GPUs found
-	return []base.Device{}, nil
+	if all == nil {
+		return []base.Device{}, nil
+	}
+	return all, nil
 }
 
 func Register(p base.Provider) {

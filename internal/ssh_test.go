@@ -168,3 +168,22 @@ func TestLocalhostClientExecutesAllowedCommandWithoutSSH(t *testing.T) {
 		t.Fatalf("output = %q, want path containing sh", output)
 	}
 }
+
+func TestLocalhostCommandTimeout(t *testing.T) {
+	previous := commandTimeout
+	commandTimeout = 0
+	t.Cleanup(func() { commandTimeout = previous })
+
+	client, err := NewSSHClient(SSHHost{Name: "localhost", Hostname: "localhost", Local: true})
+	if err != nil {
+		t.Fatalf("NewSSHClient(localhost) returned error: %v", err)
+	}
+
+	_, err = client.ExecuteCommand("which sh")
+	if err == nil {
+		t.Fatalf("expected command timeout")
+	}
+	if !strings.Contains(err.Error(), "timed out after") {
+		t.Fatalf("timeout error = %v", err)
+	}
+}

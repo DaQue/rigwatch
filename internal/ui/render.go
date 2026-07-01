@@ -606,19 +606,28 @@ func renderFanSection(fans []internal.FanInfo, fanHistory map[string][]float64, 
 }
 
 func renderTemperatureSection(temps []internal.TemperatureInfo, gpus []internal.GPUInfo, history []float64, width int) string {
-	// Merge GPU temps as fallback/addition
-	seen := make(map[string]bool)
-	for _, t := range temps {
-		seen[t.Name] = true
+	// Surface GPU temperature first so the accelerator's heat is always visible
+	// next to the hwmon/thermal-zone sensors, then fall through to the rest.
+	type tempRow struct {
+		name    string
+		celsius float64
 	}
+	rows := make([]tempRow, 0, len(gpus)+len(temps))
 	for _, g := range gpus {
-		name := fmt.Sprintf("GPU %s", g.Index)
-		if !seen[name] {
-			temps = append(temps, internal.TemperatureInfo{Name: name, Celsius: float64(g.Temperature)})
+		if g.Temperature <= 0 {
+			continue
 		}
+		name := "GPU"
+		if len(gpus) > 1 {
+			name = "GPU " + g.Index
+		}
+		rows = append(rows, tempRow{name: name, celsius: float64(g.Temperature)})
+	}
+	for _, temp := range temps {
+		rows = append(rows, tempRow{name: temp.Name, celsius: temp.Celsius})
 	}
 
-	if len(temps) == 0 {
+	if len(rows) == 0 {
 		return renderPanel("TEMPERATURES", mutedStyle.Render("temperature telemetry unavailable"), width)
 	}
 
@@ -626,25 +635,33 @@ func renderTemperatureSection(temps []internal.TemperatureInfo, gpus []internal.
 	// Header row
 	b.WriteString(mutedStyle.Render(fmt.Sprintf("%-12s  %s", "SENSOR", "TEMP")))
 	b.WriteString("\n")
-	limit := min(len(temps), 5)
+	limit := min(len(rows), 5)
 	barWidth := clampInt(width-25, 4, 40)
 	for i := 0; i < limit; i++ {
-		temp := temps[i]
-		rawValue := fmt.Sprintf("%-6s", fmt.Sprintf("%.1f°C", temp.Celsius))
+		row := rows[i]
+		rawValue := fmt.Sprintf("%-6s", fmt.Sprintf("%.1f°C", row.celsius))
 		// GPU sensors use the dedicated GPU temperature thresholds; everything
 		// else uses the general temperature thresholds.
 		tempThreshold := activeThresholds.TempC
-		if strings.HasPrefix(temp.Name, "GPU") {
+		if strings.HasPrefix(row.name, "GPU") {
 			tempThreshold = activeThresholds.GPUTempC
 		}
-		styledValue := severityStyle(severityFor(temp.Celsius, tempThreshold), successStyle).Render(rawValue)
-		pct := math.Min(100, temp.Celsius)
+		styledValue := severityStyle(severityFor(row.celsius, tempThreshold), successStyle).Render(rawValue)
+		pct := math.Min(100, row.celsius)
 		bar := renderThinLineGraph(pct, barWidth)
-		b.WriteString(fmt.Sprintf("%-12s  %s %s", truncateVisible(temp.Name, 12), styledValue, bar))
+		b.WriteString(fmt.Sprintf("%-12s  %s %s", truncateVisible(row.name, 12), styledValue, bar))
 		if i != limit-1 {
 			b.WriteString("\n")
 		}
 	}
+
+	// Peak-temperature trend (max across CPU + GPU sensors, tracked per host).
+	if len(history) > 1 {
+		b.WriteString("\n")
+		b.WriteString(mutedStyle.Render("TREND "))
+		b.WriteString(renderSparklineThreshold(history, clampInt(width-9, 4, 40), activeThresholds.TempC))
+	}
+
 	return renderPanel("TEMPERATURES", b.String(), width)
 }
 
