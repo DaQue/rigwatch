@@ -89,11 +89,13 @@ func (m *Model) applyDisplayMode(mode displayMode) {
 		m.gridTilesPerPage = 2
 		m.quadPage = 0
 		m.clampQuadFocus()
+		m.resetGridFocus()
 	case modeGrid:
 		m.screen = ScreenQuad
 		m.gridTilesPerPage = quadPageSize
 		m.quadPage = 0
 		m.clampQuadFocus()
+		m.resetGridFocus()
 	case modeOverview:
 		m.screen = ScreenOverview
 	}

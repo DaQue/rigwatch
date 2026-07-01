@@ -47,6 +47,8 @@ type Model struct {
 	metricHistories   map[string]metricHistory
 	quadPage          int
 	quadFocus         int
+	headerFocus       int    // grid header toolbar focus; -1 = a pane is focused
+	focusFramesLeft   int    // animation frames the grid focus highlight stays visible
 	gridTilesPerPage  int    // tiles per page on the grid screen: 2 (dual) or 4 (quad)
 	quadStatus        string // transient feedback for the quad view (e.g. "layout saved")
 	postConnectScreen Screen // screen to land on once the connecting screen finishes
@@ -90,6 +92,11 @@ const (
 )
 
 const metricHistoryLimit = 40
+
+// focusHoldFrames is how many animation ticks (~250ms each) the grid focus
+// highlight stays lit after the user moves focus, before it fades out so it
+// isn't permanently left on a pane.
+const focusHoldFrames = 6
 
 type metricHistory struct {
 	CPU     []float64
@@ -210,6 +217,7 @@ func InitialModel(hosts []internal.SSHHost, updateInterval time.Duration) Model 
 		screen:            ScreenHostList,
 		postConnectScreen: ScreenDashboard,
 		gridTilesPerPage:  quadPageSize,
+		headerFocus:       -1,
 		hosts:             hosts,
 		list:              l,
 		spinner:           s,
@@ -254,6 +262,7 @@ func InitialModelWithHosts(allHosts []internal.SSHHost, selectedHosts []internal
 		screen:            ScreenConnecting,
 		postConnectScreen: ScreenDashboard,
 		gridTilesPerPage:  quadPageSize,
+		headerFocus:       -1,
 		hosts:             allHosts,
 		selectedHosts:     selectedHosts,
 		currentHostIdx:    0,

@@ -121,6 +121,7 @@ func TestQuadRendersDifferentHostThemesAndFocusedThemeName(t *testing.T) {
 	m.width = 140
 	m.height = 40
 	m.quadFocus = 1
+	m.focusFramesLeft = focusHoldFrames // focus highlight is transient; arm it
 	m.themePrefs = ThemePreferences{Hosts: map[string]string{"alpha": "rigwatch", "beta": "nord"}}
 	m.sysInfos = map[string]*internal.SystemInfo{
 		"alpha": sampleLargeSystemInfo(),

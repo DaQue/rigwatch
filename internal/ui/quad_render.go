@@ -28,8 +28,8 @@ func (m Model) renderQuad() string {
 	if m.quadStatus != "" {
 		statusHint = "  •  " + m.quadStatus
 	}
-	subtitle := fmt.Sprintf("v%s  •  refreshed %s  •  interval %s%s  •  v modes  •  t dashboard  •  c add hosts  •  w save layout  •  ? help  •  q quit%s",
-		internal.ShortVersion(), time.Now().Format("15:04:05"), formatInterval(m.updateInterval), pageHint, statusHint)
+	subtitle := fmt.Sprintf("v%s  •  refreshed %s  •  interval %s%s  •  %s  •  q quit%s",
+		internal.ShortVersion(), time.Now().Format("15:04:05"), formatInterval(m.updateInterval), pageHint, m.renderQuadToolbar(), statusHint)
 	gridTitle := "COMMAND CENTER // GRID"
 	if m.gridTilesPerPage <= 2 {
 		gridTitle = "COMMAND CENTER // DUAL"
@@ -42,7 +42,10 @@ func (m Model) renderQuad() string {
 		for col := 0; col < layout.Columns; col++ {
 			idx := layout.Start + row*layout.Columns + col
 			if idx < layout.End {
-				cells = append(cells, m.renderQuadPanelWithFocus(m.selectedHosts[idx], layout.CellWidth, layout.BodyLines, idx-layout.Start == m.quadFocus))
+				// The focus highlight is transient: only the focused pane shows it,
+				// and only for a short window after the user moves focus.
+				focused := idx-layout.Start == m.quadFocus && m.focusFramesLeft > 0
+				cells = append(cells, m.renderQuadPanelWithFocus(m.selectedHosts[idx], layout.CellWidth, layout.BodyLines, focused))
 			} else {
 				cells = append(cells, renderEmptyQuadCell(layout.CellWidth, layout.BodyLines))
 			}
