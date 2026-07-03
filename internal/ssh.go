@@ -505,6 +505,8 @@ func isAllowedCommand(cmd string) bool {
 		"rocm-smi ",
 		"free -",
 		"df -",
+		"cat /sys/class/drm/",
+		"lspci ",
 	}
 
 	for _, prefix := range allowedPrefixes {

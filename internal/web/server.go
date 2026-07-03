@@ -187,6 +187,10 @@ func (s *Server) collectOne(host internal.SSHHost) {
 
 	if err != nil {
 		st.err = fmt.Errorf("collect: %w", err)
+		if client != nil {
+			client.Close()
+		}
+		st.client = nil
 		return
 	}
 

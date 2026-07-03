@@ -1,0 +1,27 @@
+services:
+  rigwatch:
+    build:
+      context: .
+      args:
+        GIT_TAG: ${GIT_TAG:-v0.0.0}
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
+    container_name: rigwatch-web
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    volumes:
+      # SSH config & keys for connecting to monitored hosts
+      - ~/.ssh:/root/.ssh:ro
+      # Known hosts file gets updated as hosts are connected to
+      - ~/.ssh/known_hosts:/root/.ssh/known_hosts
+      # Rigwatch managed SSH config (for key installs, etc.)
+      - ~/.ssh/rigwatch-config.d:/root/.ssh/rigwatch-config.d:ro
+    environment:
+      - TZ=America/Chicago
+    # Health check: the API endpoint returns JSON
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8081/api/hosts"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
