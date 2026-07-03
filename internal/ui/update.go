@@ -42,6 +42,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// The display-mode picker is modal while open.
+		if m.modeMenuOpen {
+			return m.updateModeMenu(msg)
+		}
+
 		// The settings screen owns all key input while it's open.
 		if m.screen == ScreenSettings {
 			return m.updateSettings(msg)
@@ -129,6 +134,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "enter":
+			if m.screen == ScreenQuad && m.headerFocus >= 0 {
+				// Activate the focused header toolbar item.
+				m.activateHeaderItem()
+				return m, nil
+			}
 			if m.screen == ScreenHostList {
 				if len(m.selectedHosts) == 0 {
 					if item, ok := m.list.SelectedItem().(hostItem); ok {
@@ -144,10 +154,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "n":
 			if m.screen == ScreenQuad {
-				layout := paneLayout(m.width, m.height, len(m.selectedHosts), m.quadPage)
+				layout := paneLayout(m.width, m.height, len(m.selectedHosts), m.quadPage, m.gridTilesPerPage)
 				if layout.Pages > 1 {
 					m.quadPage = (m.quadPage + 1) % layout.Pages
 					m.clampQuadFocus()
+					m.resetGridFocus()
 					m.quadStatus = ""
 				}
 			} else if m.screen == ScreenDashboard && len(m.selectedHosts) > 1 {
@@ -159,20 +170,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "p":
 			if m.screen == ScreenQuad {
-				layout := paneLayout(m.width, m.height, len(m.selectedHosts), m.quadPage)
+				layout := paneLayout(m.width, m.height, len(m.selectedHosts), m.quadPage, m.gridTilesPerPage)
 				if layout.Pages > 1 {
 					m.quadPage = (m.quadPage - 1 + layout.Pages) % layout.Pages
 					m.clampQuadFocus()
+					m.resetGridFocus()
 					m.quadStatus = ""
 				}
 			}
 		case "tab":
 			if m.screen == ScreenQuad {
-				m.moveQuadFocus(1)
+				m.advanceGridFocus(1)
 			}
 		case "shift+tab":
 			if m.screen == ScreenQuad {
-				m.moveQuadFocus(-1)
+				m.advanceGridFocus(-1)
 			}
 		case "w":
 			if m.screen == ScreenQuad {
@@ -181,16 +193,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "]":
 			if m.screen == ScreenQuad {
 				m.cycleFocusedHostTheme(1)
+				m.armFocusHighlight()
 			}
 		case "[":
 			if m.screen == ScreenQuad {
 				m.cycleFocusedHostTheme(-1)
+				m.armFocusHighlight()
+			}
+		case "v":
+			if m.screen == ScreenDashboard || m.screen == ScreenOverview || m.screen == ScreenQuad {
+				m.openModeMenu()
+				return m, nil
 			}
 		case "g":
 			switch m.screen {
 			case ScreenDashboard, ScreenOverview:
 				m.screen = ScreenQuad
 				m.quadPage = 0
+				m.resetGridFocus()
 			case ScreenQuad:
 				m.screen = ScreenDashboard
 			}
@@ -302,6 +322,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case AnimationTickMsg:
 		m.animationFrame++
+		if m.focusFramesLeft > 0 {
+			m.focusFramesLeft-- // fade the grid focus highlight when idle
+		}
 		cmds := []tea.Cmd{animationTick()}
 		// Start the spinner's self-tick only while it's actually on screen.
 		if m.spinnerActive() && !m.spinnerRunning {
@@ -434,7 +457,7 @@ func (m Model) spinnerActive() bool {
 }
 
 func (m *Model) visibleQuadHostCount() int {
-	layout := paneLayout(m.width, m.height, len(m.selectedHosts), m.quadPage)
+	layout := paneLayout(m.width, m.height, len(m.selectedHosts), m.quadPage, m.gridTilesPerPage)
 	return max(0, layout.End-layout.Start)
 }
 
@@ -456,8 +479,14 @@ func (m *Model) moveQuadFocus(delta int) {
 	m.quadFocus = (m.quadFocus + delta + count) % count
 }
 
+// armFocusHighlight lights the grid focus highlight for focusHoldFrames ticks,
+// after which the animation tick fades it so it isn't left on a pane.
+func (m *Model) armFocusHighlight() {
+	m.focusFramesLeft = focusHoldFrames
+}
+
 func (m *Model) focusedQuadHost() (internal.SSHHost, bool) {
-	layout := paneLayout(m.width, m.height, len(m.selectedHosts), m.quadPage)
+	layout := paneLayout(m.width, m.height, len(m.selectedHosts), m.quadPage, m.gridTilesPerPage)
 	if layout.End <= layout.Start {
 		return internal.SSHHost{}, false
 	}
@@ -481,7 +510,7 @@ func (m *Model) saveQuadLayout() {
 	for i, h := range m.selectedHosts {
 		names[i] = h.Name
 	}
-	if err := SaveLayoutPreferences(LayoutPreferences{Hosts: names, Page: m.quadPage}); err != nil {
+	if err := SaveLayoutPreferences(LayoutPreferences{Hosts: names, Page: m.quadPage, TilesPerPage: m.gridTilesPerPage}); err != nil {
 		m.quadStatus = "save failed: " + err.Error()
 		return
 	}
@@ -494,8 +523,13 @@ func (m *Model) cycleFocusedHostTheme(delta int) {
 		return
 	}
 	current := m.themePrefs.ThemeNameForHost(host.Name)
-	m.themePrefs.SetHostTheme(host.Name, nextThemeName(current, delta))
-	_ = SaveThemePreferences(m.themePrefs)
+	next := nextThemeName(current, delta)
+	m.themePrefs.SetHostTheme(host.Name, next)
+	if err := SaveThemePreferences(m.themePrefs); err != nil {
+		m.quadStatus = "theme save failed: " + err.Error()
+		return
+	}
+	m.quadStatus = fmt.Sprintf("%s theme: %s", host.Name, next)
 }
 
 func (m *Model) appendMetricHistory(hostName string, info *internal.SystemInfo) {

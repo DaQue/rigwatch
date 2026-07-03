@@ -14,16 +14,19 @@ func (l paneGrid) PageSize() int {
 	return l.Columns * l.Rows
 }
 
-func paneLayout(width, height, total, page int) paneGrid {
+func paneLayout(width, height, total, page, maxTiles int) paneGrid {
 	width = max(1, width)
 	height = max(1, height)
+	if maxTiles < 1 {
+		maxTiles = quadPageSize
+	}
 
 	visible := total
 	if visible <= 0 {
 		visible = 1
 	}
-	if visible > quadPageSize {
-		visible = quadPageSize
+	if visible > maxTiles {
+		visible = maxTiles
 	}
 
 	columns, rows := paneShape(width, visible)

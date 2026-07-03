@@ -102,6 +102,9 @@ func TestQuadThemeControlsFocusAndCycleFocusedHost(t *testing.T) {
 	if m.themePrefs.Hosts["beta"] == "rigwatch" || m.themePrefs.Hosts["beta"] == "" {
 		t.Fatalf("beta theme did not cycle: %+v", m.themePrefs.Hosts)
 	}
+	if !strings.Contains(m.quadStatus, "beta theme:") {
+		t.Fatalf("theme cycle status = %q, want beta confirmation", m.quadStatus)
+	}
 
 	loaded, err := LoadThemePreferences()
 	if err != nil {
@@ -109,6 +112,26 @@ func TestQuadThemeControlsFocusAndCycleFocusedHost(t *testing.T) {
 	}
 	if loaded.Hosts["beta"] != m.themePrefs.Hosts["beta"] {
 		t.Fatalf("saved beta theme = %q, want %q", loaded.Hosts["beta"], m.themePrefs.Hosts["beta"])
+	}
+}
+
+func TestQuadThemeCycleReportsPersistenceFailure(t *testing.T) {
+	configHome := filepath.Join(t.TempDir(), "config-file")
+	if err := os.WriteFile(configHome, []byte("not a directory"), 0600); err != nil {
+		t.Fatalf("write config sentinel: %v", err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+
+	m := InitialModelWithHosts(testHosts("alpha"), testHosts("alpha"), 0)
+	m.screen = ScreenQuad
+	m.width = 120
+	m.height = 40
+	m.themePrefs = ThemePreferences{Hosts: map[string]string{"alpha": "rigwatch"}}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}})
+	m = updated.(Model)
+	if !strings.HasPrefix(m.quadStatus, "theme save failed:") {
+		t.Fatalf("quadStatus = %q, want save failure", m.quadStatus)
 	}
 }
 
@@ -121,6 +144,7 @@ func TestQuadRendersDifferentHostThemesAndFocusedThemeName(t *testing.T) {
 	m.width = 140
 	m.height = 40
 	m.quadFocus = 1
+	m.focusFramesLeft = focusHoldFrames // focus highlight is transient; arm it
 	m.themePrefs = ThemePreferences{Hosts: map[string]string{"alpha": "rigwatch", "beta": "nord"}}
 	m.sysInfos = map[string]*internal.SystemInfo{
 		"alpha": sampleLargeSystemInfo(),

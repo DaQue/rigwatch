@@ -35,6 +35,10 @@ func (m Model) View() string {
 		return m.renderHelp()
 	}
 
+	if m.modeMenuOpen {
+		return m.renderModeMenu()
+	}
+
 	switch m.screen {
 	case ScreenHostList:
 		switch m.manageMode {

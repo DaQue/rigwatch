@@ -37,6 +37,10 @@ type Settings struct {
 	DefaultTheme       string     `json:"default_theme"`
 	Thresholds         Thresholds `json:"thresholds"`
 	ShowExtendedPanels bool       `json:"show_extended_panels"`
+	CheckForUpdates    bool       `json:"check_for_updates"`
+	// UpdateCheckIntervalHours controls how long a successful update-check
+	// result is cached. <= 0 is normalized to the built-in default.
+	UpdateCheckIntervalHours int `json:"update_check_interval_hours"`
 }
 
 // DefaultThresholds returns the built-in alerting limits. The temperature pair
@@ -57,10 +61,12 @@ func DefaultThresholds() Thresholds {
 // DefaultSettings returns the configuration used when no settings file is present.
 func DefaultSettings() Settings {
 	return Settings{
-		Interval:           0, // 0 => caller's built-in default
-		DefaultTheme:       defaultThemeName,
-		Thresholds:         DefaultThresholds(),
-		ShowExtendedPanels: true,
+		Interval:                 0, // 0 => caller's built-in default
+		DefaultTheme:             defaultThemeName,
+		Thresholds:               DefaultThresholds(),
+		ShowExtendedPanels:       true,
+		CheckForUpdates:          true,
+		UpdateCheckIntervalHours: 24,
 	}
 }
 
@@ -123,6 +129,9 @@ func (s *Settings) normalize() {
 		s.DefaultTheme = defaultThemeName
 	} else {
 		s.DefaultTheme = ThemeByName(s.DefaultTheme).Name
+	}
+	if s.UpdateCheckIntervalHours <= 0 {
+		s.UpdateCheckIntervalHours = 24
 	}
 	def := DefaultThresholds()
 	fillThreshold(&s.Thresholds.CPUPct, def.CPUPct)

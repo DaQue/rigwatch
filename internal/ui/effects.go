@@ -218,6 +218,41 @@ func renderSparkline(values []float64, width int) string {
 	return lipgloss.NewStyle().Foreground(cyanColor).Render(b.String())
 }
 
+// renderSparklineThreshold renders a trend like renderSparkline, but colors each
+// point by its severity against t: samples below the warn level keep the themed
+// accent, while points that crossed warn/crit are drawn amber/red so a past
+// spike is visible at the moment in time it happened. A disabled (0/0) threshold
+// renders identically to renderSparkline.
+func renderSparklineThreshold(values []float64, width int, t Threshold) string {
+	width = clampInt(width, 1, 120)
+	if len(values) == 0 {
+		return emptyBarStyle.Render(strings.Repeat("▁", width))
+	}
+
+	glyphs := []string{"▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"}
+	base := lipgloss.NewStyle().Foreground(cyanColor)
+	samples := resampleValues(values, width)
+
+	var b strings.Builder
+	// Coalesce consecutive same-severity points into one styled run to keep the
+	// escape-sequence count down.
+	runStart := 0
+	for i := 0; i <= len(samples); i++ {
+		if i < len(samples) && severityFor(samples[i], t) == severityFor(samples[runStart], t) {
+			continue
+		}
+		var run strings.Builder
+		for j := runStart; j < i; j++ {
+			v := math.Max(0, math.Min(100, samples[j]))
+			idx := clampInt(int(math.Round((v/100)*float64(len(glyphs)-1))), 0, len(glyphs)-1)
+			run.WriteString(glyphs[idx])
+		}
+		b.WriteString(severityStyle(severityFor(samples[runStart], t), base).Render(run.String()))
+		runStart = i
+	}
+	return b.String()
+}
+
 func resampleValues(values []float64, width int) []float64 {
 	if len(values) >= width {
 		return values[len(values)-width:]

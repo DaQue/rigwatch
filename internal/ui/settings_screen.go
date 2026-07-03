@@ -183,10 +183,12 @@ func (m Model) saveSettingsForm() (tea.Model, tea.Cmd) {
 	}
 
 	newSettings := Settings{
-		Interval:           interval,
-		DefaultTheme:       ThemeNames()[s.themeIdx],
-		Thresholds:         thresholds,
-		ShowExtendedPanels: m.settings.ShowExtendedPanels,
+		Interval:                 interval,
+		DefaultTheme:             ThemeNames()[s.themeIdx],
+		Thresholds:               thresholds,
+		ShowExtendedPanels:       m.settings.ShowExtendedPanels,
+		CheckForUpdates:          m.settings.CheckForUpdates,
+		UpdateCheckIntervalHours: m.settings.UpdateCheckIntervalHours,
 	}
 	if err := SaveSettings(newSettings); err != nil {
 		s.status = "Save failed: " + err.Error()

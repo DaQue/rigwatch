@@ -2,6 +2,7 @@ package internal
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -14,6 +15,8 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
+
+var commandTimeout = 10 * time.Second
 
 type SSHHost struct {
 	Name         string
@@ -524,8 +527,14 @@ func (c *SSHClient) ExecuteCommand(cmd string) (string, error) {
 	}
 
 	if c.config != nil && c.config.Local {
-		localCmd := exec.Command("sh", "-c", cmd)
+		ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+		defer cancel()
+
+		localCmd := exec.CommandContext(ctx, "sh", "-c", cmd)
 		output, err := localCmd.CombinedOutput()
+		if ctx.Err() == context.DeadlineExceeded {
+			return string(output), fmt.Errorf("command timed out after %s: %s", commandTimeout, cmd)
+		}
 		if err != nil {
 			return string(output), err
 		}
@@ -538,12 +547,26 @@ func (c *SSHClient) ExecuteCommand(cmd string) (string, error) {
 	}
 	defer session.Close()
 
-	output, err := session.CombinedOutput(cmd)
-	if err != nil {
-		return string(output), err
+	type commandResult struct {
+		output []byte
+		err    error
 	}
+	done := make(chan commandResult, 1)
+	go func() {
+		output, err := session.CombinedOutput(cmd)
+		done <- commandResult{output: output, err: err}
+	}()
 
-	return string(output), nil
+	select {
+	case result := <-done:
+		if result.err != nil {
+			return string(result.output), result.err
+		}
+		return string(result.output), nil
+	case <-time.After(commandTimeout):
+		_ = session.Close()
+		return "", fmt.Errorf("command timed out after %s: %s", commandTimeout, cmd)
+	}
 }
 
 func (c *SSHClient) Close() error {

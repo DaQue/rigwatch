@@ -142,6 +142,73 @@ func TestLoadAllHostsDedupesManaged(t *testing.T) {
 	}
 }
 
+func TestManagedSSHConfigWorkflowEndToEnd(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0700); err != nil {
+		t.Fatalf("mkdir .ssh: %v", err)
+	}
+	manualConfig := "Host manual\n    HostName 192.0.2.10\n    User admin\n"
+	if err := os.WriteFile(filepath.Join(sshDir, "config"), []byte(manualConfig), 0600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	managedHost := SSHHost{Name: "managed", Hostname: "192.0.2.20", User: "ubuntu", Port: "2200", PasswordAuth: true}
+	if err := SaveManagedHost(managedHost); err != nil {
+		t.Fatalf("SaveManagedHost: %v", err)
+	}
+
+	configData, err := os.ReadFile(filepath.Join(sshDir, "config"))
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	configText := string(configData)
+	if !strings.HasPrefix(configText, "Include "+managedConfigName+"\n") {
+		t.Fatalf("managed include should be first directive:\n%s", configText)
+	}
+	if !strings.Contains(configText, manualConfig) {
+		t.Fatalf("manual config content lost:\n%s", configText)
+	}
+
+	all, err := LoadAllHosts()
+	if err != nil {
+		t.Fatalf("LoadAllHosts: %v", err)
+	}
+	var haveManual, haveManaged bool
+	for _, h := range all {
+		switch h.Name {
+		case "manual":
+			haveManual = true
+			if h.Managed {
+				t.Fatalf("manual host should not be marked managed: %+v", h)
+			}
+		case "managed":
+			haveManaged = true
+			if !h.Managed || !h.PasswordAuth || h.Port != "2200" {
+				t.Fatalf("managed host fields not preserved: %+v", h)
+			}
+		}
+	}
+	if !haveManual || !haveManaged {
+		t.Fatalf("loaded hosts missing manual=%v managed=%v: %+v", haveManual, haveManaged, all)
+	}
+
+	if err := DeleteManagedHost("managed"); err != nil {
+		t.Fatalf("DeleteManagedHost: %v", err)
+	}
+	all, err = LoadAllHosts()
+	if err != nil {
+		t.Fatalf("LoadAllHosts after delete: %v", err)
+	}
+	for _, h := range all {
+		if h.Name == "managed" {
+			t.Fatalf("managed host still present after delete: %+v", all)
+		}
+	}
+}
+
 func TestValidateHost(t *testing.T) {
 	cases := []struct {
 		name    string

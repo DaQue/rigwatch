@@ -94,6 +94,21 @@ func TestParseThermalZonesPairsTypeAndTemp(t *testing.T) {
 	}
 }
 
+func TestParseThermalZonesFiltersDPTFManager(t *testing.T) {
+	output := `/sys/class/thermal/thermal_zone0/type:INT3400 Thermal
+/sys/class/thermal/thermal_zone0/temp:20000
+/sys/class/thermal/thermal_zone1/type:nvme
+/sys/class/thermal/thermal_zone1/temp:42123`
+
+	got := parseThermalZones(output)
+	if len(got) != 1 {
+		t.Fatalf("thermal zones = %#v, want 1 (INT3400 filtered)", got)
+	}
+	if got[0].Name != "nvme" {
+		t.Fatalf("remaining zone = %#v, want nvme", got[0])
+	}
+}
+
 func TestParseNetworkDevFiltersVirtualInterfaces(t *testing.T) {
 	output := `Inter-|   Receive                                                |  Transmit
  face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed

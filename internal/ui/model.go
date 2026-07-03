@@ -47,12 +47,17 @@ type Model struct {
 	metricHistories   map[string]metricHistory
 	quadPage          int
 	quadFocus         int
+	headerFocus       int    // grid header toolbar focus; -1 = a pane is focused
+	focusFramesLeft   int    // animation frames the grid focus highlight stays visible
+	gridTilesPerPage  int    // tiles per page on the grid screen: 2 (dual) or 4 (quad)
 	quadStatus        string // transient feedback for the quad view (e.g. "layout saved")
 	postConnectScreen Screen // screen to land on once the connecting screen finishes
 	themePrefs        ThemePreferences
 	settings          Settings
 	settingsForm      *settingsFormState
 	helpVisible       bool
+	modeMenuOpen      bool // display-mode picker overlay
+	modeMenuIdx       int
 
 	// Connection-manager sub-state (host-list screen only).
 	manageMode         manageMode
@@ -87,6 +92,11 @@ const (
 )
 
 const metricHistoryLimit = 40
+
+// focusHoldFrames is how many animation ticks (~250ms each) the grid focus
+// highlight stays lit after the user moves focus, before it fades out so it
+// isn't permanently left on a pane.
+const focusHoldFrames = 6
 
 type metricHistory struct {
 	CPU     []float64
@@ -145,11 +155,6 @@ func (h hostItem) Description() string {
 	return ""
 }
 
-func checkForUpdates() tea.Msg {
-	updateInfo := internal.CheckForUpdates()
-	return UpdateCheckMsg(updateInfo)
-}
-
 func censorHostname(hostname string) string {
 	if hostname == "" {
 		return ""
@@ -206,6 +211,8 @@ func InitialModel(hosts []internal.SSHHost, updateInterval time.Duration) Model 
 	return Model{
 		screen:            ScreenHostList,
 		postConnectScreen: ScreenDashboard,
+		gridTilesPerPage:  quadPageSize,
+		headerFocus:       -1,
 		hosts:             hosts,
 		list:              l,
 		spinner:           s,
@@ -249,6 +256,8 @@ func InitialModelWithHosts(allHosts []internal.SSHHost, selectedHosts []internal
 	return Model{
 		screen:            ScreenConnecting,
 		postConnectScreen: ScreenDashboard,
+		gridTilesPerPage:  quadPageSize,
+		headerFocus:       -1,
 		hosts:             allHosts,
 		selectedHosts:     selectedHosts,
 		currentHostIdx:    0,
@@ -298,9 +307,9 @@ func (m Model) Init() tea.Cmd {
 	// The spinner tick is started on demand by the animation tick (only while the
 	// spinner is actually visible), so it isn't kicked off here.
 	if m.screen == ScreenConnecting && len(m.selectedHosts) > 0 {
-		return tea.Batch(animationTick(), m.connectToHosts(), checkForUpdates)
+		return tea.Batch(animationTick(), m.connectToHosts(), checkForUpdates(m.settings))
 	}
-	return tea.Batch(animationTick(), checkForUpdates)
+	return tea.Batch(animationTick(), checkForUpdates(m.settings))
 }
 
 func loadThemePreferencesOrDefault() ThemePreferences {
