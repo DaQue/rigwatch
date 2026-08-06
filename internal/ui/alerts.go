@@ -204,5 +204,6 @@ func renderAlertsSection(info *internal.SystemInfo, width int) string {
 		b.WriteString("\n")
 		b.WriteString(mutedStyle.Render(fmt.Sprintf("+%d more", len(alerts)-limit)))
 	}
-	return renderPanel("ALERTS", b.String(), width)
+	// Alerts are sorted worst-first, so the head carries the panel's severity.
+	return renderPanelSev("ALERTS", b.String(), width, alerts[0].Sev)
 }
