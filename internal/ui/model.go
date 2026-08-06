@@ -91,7 +91,10 @@ const (
 	manageResult
 )
 
-const metricHistoryLimit = 40
+// metricHistoryLimit is how many samples each trend keeps. Braille sparklines
+// pack two samples per cell, so this is sized to fill the widest trend the grid
+// renders (56 cells) without resampling padding.
+const metricHistoryLimit = 112
 
 // focusHoldFrames is how many animation ticks (~250ms each) the grid focus
 // highlight stays lit after the user moves focus, before it fades out so it
