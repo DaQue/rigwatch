@@ -33,15 +33,31 @@ type Thresholds struct {
 type Settings struct {
 	// Interval is the metric refresh interval in seconds. <= 0 means "unset"
 	// and the built-in default is used.
-	Interval           float64    `json:"interval"`
-	DefaultTheme       string     `json:"default_theme"`
-	Thresholds         Thresholds `json:"thresholds"`
-	ShowExtendedPanels bool       `json:"show_extended_panels"`
-	CheckForUpdates    bool       `json:"check_for_updates"`
+	Interval     float64    `json:"interval"`
+	DefaultTheme string     `json:"default_theme"`
+	Thresholds   Thresholds `json:"thresholds"`
+	// HeadlineMode sizes the big alert reading at the top of each host tile:
+	// HeadlineLarge, HeadlineCompact or HeadlineOff. Empty or unrecognized
+	// normalizes to HeadlineLarge.
+	HeadlineMode       string `json:"headline_mode"`
+	ShowExtendedPanels bool   `json:"show_extended_panels"`
+	CheckForUpdates    bool   `json:"check_for_updates"`
 	// UpdateCheckIntervalHours controls how long a successful update-check
 	// result is cached. <= 0 is normalized to the built-in default.
 	UpdateCheckIntervalHours int `json:"update_check_interval_hours"`
 }
+
+// Headline display modes. Large is the default: three rows of block digits are
+// what make a wall of tiles scannable from across a room. Compact trades that
+// for a single line on short terminals, and Off gives the rows back to panels.
+const (
+	HeadlineLarge   = "large"
+	HeadlineCompact = "compact"
+	HeadlineOff     = "off"
+)
+
+// HeadlineModes lists the headline settings in cycling order.
+func HeadlineModes() []string { return []string{HeadlineLarge, HeadlineCompact, HeadlineOff} }
 
 // DefaultThresholds returns the built-in alerting limits. The temperature pair
 // matches the previously hardcoded coloring (warn 70 / crit 85) so behavior is
@@ -64,6 +80,7 @@ func DefaultSettings() Settings {
 		Interval:                 0, // 0 => caller's built-in default
 		DefaultTheme:             defaultThemeName,
 		Thresholds:               DefaultThresholds(),
+		HeadlineMode:             HeadlineLarge,
 		ShowExtendedPanels:       true,
 		CheckForUpdates:          true,
 		UpdateCheckIntervalHours: 24,
@@ -129,6 +146,11 @@ func (s *Settings) normalize() {
 		s.DefaultTheme = defaultThemeName
 	} else {
 		s.DefaultTheme = ThemeByName(s.DefaultTheme).Name
+	}
+	switch s.HeadlineMode {
+	case HeadlineLarge, HeadlineCompact, HeadlineOff:
+	default:
+		s.HeadlineMode = HeadlineLarge
 	}
 	if s.UpdateCheckIntervalHours <= 0 {
 		s.UpdateCheckIntervalHours = 24

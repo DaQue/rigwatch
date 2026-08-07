@@ -351,7 +351,7 @@ func TestHeadlineLongLabelStaysInsideTile(t *testing.T) {
 	}
 }
 
-func TestHostPaneHeadlineYieldsToPanelsWhenItWouldNotFit(t *testing.T) {
+func TestHostPaneAlwaysCarriesHeadline(t *testing.T) {
 	host := internal.SSHHost{Name: "rig"}
 	info := &internal.SystemInfo{
 		CPU: internal.CPUInfo{Usage: "44%", UsagePercent: 44},
@@ -368,12 +368,13 @@ func TestHostPaneHeadlineYieldsToPanelsWhenItWouldNotFit(t *testing.T) {
 	grid := renderMetricsGrid(info, metricHistory{}, 78, false)
 	exact := countRenderedLines(grid)
 
-	// A pane with room for the grid but not the extra four headline rows must
-	// keep the panels intact.
-	if got := m.renderHostPane(host, 80, exact+2, false, false); containsBigDigits(got) {
-		t.Fatalf("headline displaced panels on a pane with no spare rows:\n%s", got)
+	// A pane with room for the grid but not the extra four headline rows still
+	// leads with the headline: every tile in the grid must carry one, so the
+	// panels take the truncation.
+	if got := m.renderHostPane(host, 80, exact+2, false, false); !containsBigDigits(got) {
+		t.Fatalf("headline missing on a pane with no spare rows:\n%s", got)
 	}
-	// Give it the four rows and the headline appears.
+	// Roomy pane: headline present, as before.
 	if got := m.renderHostPane(host, 80, exact+6, false, false); !containsBigDigits(got) {
 		t.Fatalf("headline missing on a pane with room for it:\n%s", got)
 	}
@@ -401,5 +402,71 @@ func TestBigDigitsAreUniformWidth(t *testing.T) {
 				t.Fatalf("digit %q row %d width = %d, want %d", digit, row, lipgloss.Width(line), bigDigitWidth)
 			}
 		}
+	}
+}
+
+func TestHeadlineModeControlsSize(t *testing.T) {
+	activeThresholds = DefaultThresholds()
+	t.Cleanup(func() { activeThresholds = DefaultThresholds() })
+
+	info := &internal.SystemInfo{
+		CPU:  internal.CPUInfo{UsagePercent: 10},
+		Disk: []internal.DiskInfo{{MountPoint: "/home", UsagePercent: "97%"}},
+	}
+
+	m := headlineTestModel()
+	m.trackAlertOnsets("rig", info)
+
+	// Large: three rows of block digits.
+	m.settings.HeadlineMode = HeadlineLarge
+	large := m.renderHeadline("rig", info, 48)
+	if n := countRenderedLines(large); n != 3 {
+		t.Fatalf("large headline = %d rows, want 3:\n%s", n, large)
+	}
+	if !containsBigDigits(large) {
+		t.Fatalf("large headline missing block digits:\n%s", large)
+	}
+
+	// Compact: one row, same reading, no block digits.
+	m.settings.HeadlineMode = HeadlineCompact
+	compact := m.renderHeadline("rig", info, 48)
+	if n := countRenderedLines(compact); n != 1 {
+		t.Fatalf("compact headline = %d rows, want 1: %q", n, compact)
+	}
+	if containsBigDigits(compact) {
+		t.Fatalf("compact headline should not use block digits: %q", compact)
+	}
+	plain := stripANSI(compact)
+	if !strings.Contains(plain, "97%") || !strings.Contains(plain, "DISK /HOME") {
+		t.Fatalf("compact headline missing the reading: %q", plain)
+	}
+	if w := lipgloss.Width(compact); w > 48 {
+		t.Fatalf("compact headline is %d wide, exceeds 48: %q", w, plain)
+	}
+
+	// Off: nothing at all, at any width.
+	m.settings.HeadlineMode = HeadlineOff
+	if got := m.renderHeadline("rig", info, 200); got != "" {
+		t.Fatalf("headline rendered while off: %q", got)
+	}
+}
+
+func TestHostPaneHeadlineModeOffLeavesOnlyPanels(t *testing.T) {
+	host := internal.SSHHost{Name: "rig"}
+	info := &internal.SystemInfo{
+		CPU: internal.CPUInfo{Usage: "44%", UsagePercent: 44},
+		RAM: internal.RAMInfo{Total: 1000, Used: 400, UsagePercent: 40},
+	}
+	m := Model{
+		selectedHosts:   []internal.SSHHost{host},
+		sysInfos:        map[string]*internal.SystemInfo{"rig": info},
+		metricHistories: map[string]metricHistory{},
+		settings:        DefaultSettings(),
+		themePrefs:      ThemePreferences{Hosts: map[string]string{}},
+	}
+	m.settings.HeadlineMode = HeadlineOff
+
+	if got := m.renderHostPane(host, 80, 40, false, false); containsBigDigits(got) {
+		t.Fatalf("headline rendered on a pane with the setting off:\n%s", got)
 	}
 }

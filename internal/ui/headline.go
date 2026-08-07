@@ -105,11 +105,27 @@ func renderBigInt(n int, style lipgloss.Style) [3]string {
 	return rows
 }
 
-// renderHeadline returns the three-row headline block for a tile, or an empty
-// string when there is no telemetry or the tile is too narrow to carry it.
+// renderHeadline returns the headline block for a tile: three rows of block
+// digits under HeadlineLarge, a single line under HeadlineCompact, or an empty
+// string under HeadlineOff, without telemetry, or on a tile too narrow to carry
+// the chosen size.
 func (m Model) renderHeadline(hostName string, info *internal.SystemInfo, width int) string {
+	mode := m.settings.HeadlineMode
+	if mode == "" {
+		mode = HeadlineLarge
+	}
+	if mode == HeadlineOff {
+		return ""
+	}
+
 	reading, ok := m.headlineMetric(hostName, info)
-	if !ok || width < headlineMinWidth {
+	if !ok {
+		return ""
+	}
+	if mode == HeadlineCompact {
+		return renderCompactHeadline(reading, width)
+	}
+	if width < headlineMinWidth {
 		return ""
 	}
 
@@ -130,4 +146,26 @@ func (m Model) renderHeadline(hostName string, info *internal.SystemInfo, width 
 		digits[1] + "  " + caption,
 		digits[2],
 	}, "\n")
+}
+
+// compactHeadlineMinWidth is the narrowest tile that can carry the one-line
+// headline: a severity glyph, a three-digit reading with its unit, and a couple
+// of characters of label.
+const compactHeadlineMinWidth = 14
+
+// renderCompactHeadline renders the same reading as one line — "▲ 97% DISK /" —
+// for terminals where four rows a tile is too steep a price. It carries the same
+// severity color as the large form, so the scan still works, just closer up.
+func renderCompactHeadline(reading headlineReading, width int) string {
+	if width < compactHeadlineMinWidth {
+		return ""
+	}
+
+	valueStyle := severityStyle(reading.sev, accentStyle)
+	value := clampInt(int(math.Round(reading.value)), 0, 999)
+	head := severityGlyph(reading.sev) + " " +
+		valueStyle.Render(strconv.Itoa(value)+reading.unit) + " "
+
+	labelWidth := width - lipgloss.Width(head)
+	return head + mutedStyle.Render(truncateVisible(reading.label, labelWidth))
 }
