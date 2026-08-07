@@ -6,6 +6,11 @@ services:
       # from the .git dir. Override with --build-arg if needed.
     container_name: rigwatch-web
     restart: unless-stopped
+    # Explicit opt-in to LAN exposure: the binary default is 127.0.0.1 (loopback).
+    # The web API is unauthenticated, so keep 0.0.0.0 only on trusted networks —
+    # a loud warning is logged at startup when binding all interfaces.
+    # ENTRYPOINT is already `rigwatch`, so args only (no binary name)
+    command: ["--web", "--port", "8081", "--bind", "0.0.0.0"]
     # Must share host network + NET_ADMIN so `wg show pia` sees the host tunnel
     network_mode: host
     cap_add:
@@ -21,9 +26,10 @@ services:
       - /sys:/sys:ro
     environment:
       - TZ=America/Chicago
-    # Health check: the API endpoint returns JSON
+    # Health check: use 127.0.0.1, not localhost — inside the container localhost
+    # can resolve to ::1 while the server binds IPv4 127.0.0.1
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8081/api/hosts"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8081/api/hosts"]
       interval: 30s
       timeout: 5s
       retries: 3
