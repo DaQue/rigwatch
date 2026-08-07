@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/allisonhere/rigwatch/internal"
+	"github.com/allisonhere/rigwatch/internal/ui"
 )
 
 //go:embed dashboard.html
@@ -74,6 +75,7 @@ type Server struct {
 	hosts    []internal.SSHHost
 	interval time.Duration
 	port     int
+	bind     string
 
 	mu     sync.RWMutex
 	states map[string]*hostState
@@ -83,8 +85,13 @@ type Server struct {
 }
 
 // NewServer creates a web server that collects data from the given hosts.
+// bind is the address to listen on: "127.0.0.1" by default, "0.0.0.0" only
+// when the operator explicitly opts in (the API has no authentication).
 // Call Start() to begin serving.
-func NewServer(hosts []internal.SSHHost, interval time.Duration, port int) *Server {
+func NewServer(hosts []internal.SSHHost, interval time.Duration, port int, bind string) *Server {
+	if bind == "" {
+		bind = "127.0.0.1"
+	}
 	states := make(map[string]*hostState, len(hosts))
 	for _, h := range hosts {
 		states[h.Name] = &hostState{}
@@ -93,6 +100,7 @@ func NewServer(hosts []internal.SSHHost, interval time.Duration, port int) *Serv
 		hosts:    hosts,
 		interval: interval,
 		port:     port,
+		bind:     bind,
 		states:   states,
 	}
 }
@@ -109,27 +117,39 @@ func (s *Server) Start() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/hosts", s.handleHosts)
 	mux.HandleFunc("/api/pia", s.handlePIA)
+	mux.HandleFunc("/api/settings", s.handleSettings)
 	mux.HandleFunc("/", s.handleDashboard)
 
 	// Start PIA WireGuard polling
 	go s.piaCollectLoop()
 
-	addr := fmt.Sprintf(":%d", s.port)
-	log.Printf("rigwatch web server starting on http://0.0.0.0%s", addr)
-	return http.ListenAndServe(addr, corsMiddleware(mux))
+	addr := fmt.Sprintf("%s:%d", s.bind, s.port)
+	if s.bind == "0.0.0.0" {
+		// The API is unauthenticated and exposes process lists plus VPN details.
+		log.Printf("WARNING: rigwatch web server on %s (all interfaces, no auth) — use --bind 127.0.0.1 unless remote access is intended", addr)
+	} else {
+		log.Printf("rigwatch web server starting on http://%s", addr)
+	}
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	return srv.ListenAndServe()
 }
 
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+// handleSettings serves the same thresholds that drive TUI alerting, so the
+// dashboard renders severity colors from one source of truth (settings.json)
+// instead of a second copy of the numbers.
+func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	settings, err := ui.LoadSettings()
+	if err != nil {
+		// Missing/unreadable settings file: serve defaults so the dashboard
+		// still has consistent thresholds to render with.
+		settings = ui.DefaultSettings()
+	}
+	json.NewEncoder(w).Encode(settings)
 }
 
 func (s *Server) connectAll() {

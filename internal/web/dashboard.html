@@ -174,7 +174,27 @@ function applyTheme(t) {
 function cycleTheme() { themeIdx=(themeIdx+1)%THEMES.length; applyTheme(THEMES[themeIdx]); }
 
 /* ── Helpers ── */
-function heatGrad(pct) {
+let TH = null; // severity thresholds served by /api/settings — one source of truth
+async function fetchSettings() {
+  try { const r = await fetch('/api/settings'); const s = await r.json();
+    TH = (s && s.thresholds) ? s.thresholds : null; } catch(e) { TH = null; }
+  renderAll();
+}
+function th(metric) {
+  const t = TH && TH[metric];
+  return (t && (t.warn > 0 || t.crit > 0)) ? t : null; // zero pairs = unset
+}
+function sev(metric, pct) {
+  const t = th(metric);
+  if (!t) return null;
+  if (pct >= t.crit) return 'var(--red)';
+  if (pct >= t.warn) return 'var(--amber)';
+  return 'var(--green)';
+}
+function heatGrad(metric, pct) {
+  const c = sev(metric, pct);
+  if (c) return c;
+  // Fallback gradient for metrics without thresholds (e.g. VRAM) or before settings load.
   if (pct<50) { let t=pct/50; return `linear-gradient(90deg,#27ef9f ${pct*.7}%,${lerp('#27ef9f','#f5e842',t)} ${pct*1.3}%)`; }
   let t=(pct-50)/50; return `linear-gradient(90deg,#27ef9f ${pct*.7}%,#f5e842,${lerp('#f5e842','#ff3b4b',t)} ${pct*1.3}%)`;
 }
@@ -187,8 +207,8 @@ function fmtB(b) { if(!b) return '0B'; const u=['B','KB','MB','GB','TB']; let i=
 function fmtR(b) { if(!b) return '0'; if(b>=1e9) return (b/1e9).toFixed(2)+'G'; if(b>=1e6) return (b/1e6).toFixed(1)+'M'; if(b>=1e3) return (b/1e3).toFixed(0)+'K'; return b.toFixed(0); }
 function sName(n) { if(!n) return '?'; return n.replace(/^(package|physical|core|cpu)\s+/i,'').trim().substring(0,10); }
 
-function hbar(pct, glow) {
-  const g = glow||heatGrad(pct);
+function hbar(metric, pct, glow) {
+  const g = glow||heatGrad(metric, pct);
   return `<div class="mgbar"><div class="gf" style="width:${Math.min(100,pct)}%;background:${g}"></div></div>`;
 }
 function spark(vals, color) {
@@ -203,7 +223,7 @@ function coreBars(cores) {
   if(!cores||!cores.length) return '';
   return '<div class="cores">'+cores.map(c=>{
     const p=c.UsagePercent||0;
-    const col=p>=70?'var(--red)':p>=50?'var(--amber)':'var(--green)';
+    const col=sev('cpu_pct',p)||(p>=70?'var(--red)':p>=50?'var(--amber)':'var(--green)');
     return `<span class="core">${c.Index}<span class="cb" style="background:${col};opacity:${.3+p/100*.7}"></span></span>`;
   }).join('')+'</div>';
 }
@@ -231,14 +251,14 @@ function renderCard(snap) {
 
   // CPU
   b+=`<div class="sect">CPU LOAD</div><div class="mr"><span class="l">${cpu.Model?cpu.Model.replace(/\(R\)|\(TM\)|\(r\)|\(tm\)/g,'').replace(/  +/g,' ').substring(0,40):'Usage'}</span><span class="v">${cp.toFixed(1)}%</span></div>`;
-  b+=hbar(cp);
+  b+=hbar('cpu_pct', cp);
   if(cpu.Count) b+=`<div class="mr" style="font-size:10px"><span class="l">${cpu.Count}c</span></div>`;
   if(hist.cpu&&hist.cpu.length>1) b+=`<div class="sect" style="margin-top:0">TREND</div>${spark(hist.cpu)}`;
   if(cpu.Cores&&cpu.Cores.length) b+=coreBars(cpu.Cores);
 
   // RAM
   b+=`<div class="sect">RAM MATRIX</div><div class="mr"><span class="l">Used</span><span class="v">${rs} / ${rt} GB (${rp.toFixed(1)}%)</span></div>`;
-  b+=hbar(rp);
+  b+=hbar('ram_pct', rp);
   if(hist.ram&&hist.ram.length>1) b+=`<div class="sect" style="margin-top:0">TREND</div>${spark(hist.ram, 'var(--accent)')}`;
 
   // GPU
@@ -252,9 +272,9 @@ function renderCard(snap) {
       b+=`<span>${g.Temperature}°C</span>`;
       if(g.PowerDraw>0) b+=`<span>${g.PowerDraw}W${g.PowerLimit>0?'/'+g.PowerLimit+'W':''}</span>`;
       b+=`</div></div>`;
-      b+=`<div style="font-size:10px;color:var(--gpu)">UTIL</div>${hbar(g.Utilization)}`;
+      b+=`<div style="font-size:10px;color:var(--gpu)">UTIL</div>${hbar('gpu_util_pct', g.Utilization)}`;
       let vp=g.VRAMTotal>0?(g.VRAMUsed/g.VRAMTotal*100):0;
-      b+=`<div style="font-size:10px;color:var(--gpu)">VRAM</div>${hbar(vp)}`;
+      b+=`<div style="font-size:10px;color:var(--gpu)">VRAM</div>${hbar(null, vp)}`;
     }
     if(hist.gpu&&hist.gpu.length>1) b+=`${spark(hist.gpu,'var(--gpu)')}`;
   }
@@ -263,12 +283,14 @@ function renderCard(snap) {
   if(temps.length) {
     b+=`<div class="sect">Temps</div><div style="display:flex;gap:3px;flex-wrap:wrap;margin-bottom:3px">`;
     for(const t of temps) {
-      let p=Math.min(100,t.Celsius/100*100);
-      b+=`<span class="chip ${p>=70?'cr':p>=50?'ca':'cg'}">${sName(t.Name)} ${t.Celsius.toFixed(1)}°C</span>`;
+      let p=Math.min(100,t.Celsius);
+      let cls='cg'; const tt=th('temp_c');
+      if(tt){ cls = p>=tt.crit?'cr':p>=tt.warn?'ca':'cg'; } else { cls = p>=70?'cr':p>=50?'ca':'cg'; }
+      b+=`<span class="chip ${cls}">${sName(t.Name)} ${t.Celsius.toFixed(1)}°C</span>`;
     }
     b+=`</div>`;
     let mx=Math.max(...temps.map(t=>t.Celsius));
-    b+=hbar(Math.min(100,mx));
+    b+=hbar('temp_c', Math.min(100,mx));
     if(hist.temp&&hist.temp.length>1) b+=spark(hist.temp,'var(--temp)');
   }
 
@@ -316,7 +338,7 @@ function renderQuad(snap) {
   let gl='',gb=''; if(gpus.length){let u=gpus.reduce((s,g)=>s+g.Utilization,0)/gpus.length; gl=`<div class="ql"><span class="qm">GPU</span><span class="qg">${u.toFixed(0)}%</span></div>`; gb=`<div class="qb"><div class="qf" style="width:${u}%;background:var(--gpu)"></div></div>`;}
   let tl=''; if(temps.length){let mx=Math.max(...temps.map(t=>t.Celsius)); tl=`<div class="ql"><span class="qm">TEMP</span><span style="color:var(--temp)">${mx.toFixed(1)}°C</span></div>`;}
   let nl=''; if(nets.length){let rx=nets.reduce((s,n)=>s+n.RXBps,0),tx=nets.reduce((s,n)=>s+n.TXBps,0); nl=`<div class="qn2">⬇${fmtR(rx)} ⬆${fmtR(tx)}</div>`;}
-  return `<div class="qpane"><div class="qn">${snap.name}</div><div class="ql"><span class="qm">CPU</span><span>${cp.toFixed(1)}%</span></div><div class="qb"><div class="qf" style="width:${cp}%;background:${heatGrad(cp)}"></div></div><div class="ql"><span class="qm">RAM</span><span>${ram.Used?(ram.Used/1024).toFixed(0):'?'}/${ram.Total?(ram.Total/1024).toFixed(0):'?'}G</span></div><div class="qb"><div class="qf" style="width:${rp}%;background:${heatGrad(rp)}"></div></div>${gl}${gb}${tl}${nl}</div>`;
+  return `<div class="qpane"><div class="qn">${snap.name}</div><div class="ql"><span class="qm">CPU</span><span>${cp.toFixed(1)}%</span></div><div class="qb"><div class="qf" style="width:${cp}%;background:${heatGrad('cpu_pct', cp)}"></div></div><div class="ql"><span class="qm">RAM</span><span>${ram.Used?(ram.Used/1024).toFixed(0):'?'}/${ram.Total?(ram.Total/1024).toFixed(0):'?'}G</span></div><div class="qb"><div class="qf" style="width:${rp}%;background:${heatGrad('ram_pct', rp)}"></div></div>${gl}${gb}${tl}${nl}</div>`;
 }
 
 /* ── MOBILE ── */
@@ -326,10 +348,10 @@ function renderMobile(snap) {
   let cpu=info.CPU||{}, ram=info.RAM||{}, gpus=info.GPUs||[], temps=info.Temps||[], nets=info.Network||[], disks=info.Disk||[];
   let cp=cpu.UsagePercent||0, rp=ram.UsagePercent||0;
   let h=`<div class="mcard"><div class="mhdr"><span class="mn">${snap.name}</span><span class="mt">${snap.updated?new Date(snap.updated).toLocaleTimeString():''}</span></div>`;
-  h+=`<div class="mr2"><span class="ml">CPU</span><span class="mv">${cp.toFixed(1)}%</span></div><div class="mb"><div class="mf" style="width:${cp}%;background:${heatGrad(cp)}"></div></div>`;
-  if(ram.Total){h+=`<div class="mr2"><span class="ml">RAM</span><span class="mv">${(ram.Used/1024).toFixed(1)}/${(ram.Total/1024).toFixed(1)}GB</span></div><div class="mb"><div class="mf" style="width:${rp}%;background:${heatGrad(rp)}"></div></div>`;}
+  h+=`<div class="mr2"><span class="ml">CPU</span><span class="mv">${cp.toFixed(1)}%</span></div><div class="mb"><div class="mf" style="width:${cp}%;background:${heatGrad('cpu_pct', cp)}"></div></div>`;
+  if(ram.Total){h+=`<div class="mr2"><span class="ml">RAM</span><span class="mv">${(ram.Used/1024).toFixed(1)}/${(ram.Total/1024).toFixed(1)}GB</span></div><div class="mb"><div class="mf" style="width:${rp}%;background:${heatGrad('ram_pct', rp)}"></div></div>`;}
   if(gpus.length){h+=`<div class="ms">GPU</div><div class="mf2">`; for(const g of gpus){let nm=g.Name||'';if(nm.length>26)nm=nm.substring(0,23)+'…';h+=`<span>${nm}</span><span>${g.Utilization}%</span><span>${g.Temperature}°C</span>`;} h+=`</div>`;}
-  if(temps.length){h+=`<div class="ms">Temps</div><div class="mf2">`; for(const t of temps){let p=Math.min(100,t.Celsius/100*100);h+=`<span class="mchip ${p>=70?'cr':p>=50?'ca':'cg'}">${sName(t.Name)} ${t.Celsius.toFixed(1)}°C</span>`;} h+=`</div>`;}
+  if(temps.length){h+=`<div class="ms">Temps</div><div class="mf2">`; for(const t of temps){let p=Math.min(100,t.Celsius);let cls='cg';const tt=th('temp_c');if(tt){cls=p>=tt.crit?'cr':p>=tt.warn?'ca':'cg';}else{cls=p>=70?'cr':p>=50?'ca':'cg';}h+=`<span class="mchip ${cls}">${sName(t.Name)} ${t.Celsius.toFixed(1)}°C</span>`;} h+=`</div>`;}
   if(disks.length){let r=disks.find(d=>d.MountPoint==='/');if(r)h+=`<div class="mr2" style="font-size:10px"><span class="ml">Disk /</span><span>${r.Used}/${r.Size} (${r.UsagePercent})</span></div>`;}
   if(nets.length){h+=`<div class="ms">Net</div><div class="mf2">`; for(const n of nets) h+=`<span style="font-size:10px">⬇${fmtR(n.RXBps)} ⬆${fmtR(n.TXBps)}</span>`; h+=`</div>`;}
   h+=`</div>`; return h;
@@ -419,7 +441,7 @@ async function fetchPIA() {
   }
 }
 
-renderTitle(); animateSignal(); fetchData(); fetchPIA();
+renderTitle(); animateSignal(); fetchSettings(); fetchData(); fetchPIA();
 setInterval(fetchData, REFRESH_MS);
 setInterval(fetchPIA, 5000);
 </script>
