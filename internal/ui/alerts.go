@@ -84,6 +84,16 @@ type Alert struct {
 	Sev    Severity
 }
 
+// alertOnset records when a metric entered its current alert state. Alerts are
+// otherwise stateless — recomputed from scratch on every render — so recency has
+// to be remembered separately. The seq is a per-host poll counter rather than a
+// wall clock, so every metric that trips in the same sample compares equal and
+// ties break on an explicit rule instead of on clock jitter.
+type alertOnset struct {
+	seq int64
+	sev Severity
+}
+
 // hostAlerts evaluates every monitored metric on info against t and returns the
 // active warn/crit items, worst-first. A nil info yields no alerts.
 func hostAlerts(info *internal.SystemInfo, t Thresholds) []Alert {

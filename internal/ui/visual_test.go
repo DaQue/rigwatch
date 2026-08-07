@@ -204,37 +204,106 @@ func TestLabeledTrendIndentsContinuationRows(t *testing.T) {
 	}
 }
 
-func TestDominantMetricPicksWorstSeverity(t *testing.T) {
+// headlineTestModel is a Model with just the state the headline needs.
+func headlineTestModel() Model {
+	return Model{
+		alertOnsets:  map[string]map[string]alertOnset{},
+		alertSamples: map[string]int64{},
+		settings:     DefaultSettings(),
+	}
+}
+
+func TestHeadlineFallsBackToCPULoadWithNoAlerts(t *testing.T) {
 	activeThresholds = DefaultThresholds()
 	t.Cleanup(func() { activeThresholds = DefaultThresholds() })
 
-	// RAM is critical while CPU is merely higher in raw value: severity wins.
+	m := headlineTestModel()
+	// RAM is the larger raw reading, but nothing is in alert, so CPU still leads.
 	info := &internal.SystemInfo{
-		CPU: internal.CPUInfo{UsagePercent: 99},
-		RAM: internal.RAMInfo{Total: 1000, Used: 970, UsagePercent: 97},
-	}
-	got, ok := dominantMetric(info)
-	if !ok {
-		t.Fatal("expected a headline reading")
-	}
-	if got.sev != SevCrit {
-		t.Fatalf("headline severity = %d, want SevCrit", got.sev)
-	}
-
-	// With everything nominal the largest raw value leads.
-	calm := &internal.SystemInfo{
 		CPU: internal.CPUInfo{UsagePercent: 12},
 		RAM: internal.RAMInfo{Total: 1000, Used: 400, UsagePercent: 40},
 	}
-	got, _ = dominantMetric(calm)
-	if got.label != "RAM USED" {
-		t.Fatalf("headline = %q, want RAM USED (the higher nominal reading)", got.label)
+	m.trackAlertOnsets("rig", info)
+
+	got, ok := m.headlineMetric("rig", info)
+	if !ok {
+		t.Fatal("expected a headline reading")
+	}
+	if got.label != "CPU LOAD" || got.unit != "%" {
+		t.Fatalf("headline = %q %q, want CPU LOAD %%", got.label, got.unit)
+	}
+}
+
+func TestHeadlinePicksMostRecentlyTrippedSensor(t *testing.T) {
+	activeThresholds = DefaultThresholds()
+	t.Cleanup(func() { activeThresholds = DefaultThresholds() })
+
+	m := headlineTestModel()
+	// Sample 1: a GPU runs critically hot (90C >= GPUTempC crit).
+	hot := &internal.SystemInfo{
+		CPU:  internal.CPUInfo{UsagePercent: 10},
+		GPUs: []internal.GPUInfo{{Index: "0", Temperature: 95}},
+	}
+	m.trackAlertOnsets("rig", hot)
+
+	// Sample 2: the GPU stays critical, but RAM newly crosses its warn line.
+	both := &internal.SystemInfo{
+		CPU:  internal.CPUInfo{UsagePercent: 10},
+		GPUs: []internal.GPUInfo{{Index: "0", Temperature: 95}},
+		RAM:  internal.RAMInfo{Total: 1000, Used: 880, UsagePercent: 88},
+	}
+	m.trackAlertOnsets("rig", both)
+
+	got, _ := m.headlineMetric("rig", both)
+	if got.label != "RAM" {
+		t.Fatalf("headline = %q, want RAM (newest alert beats the older critical)", got.label)
+	}
+	if got.sev != SevWarn {
+		t.Fatalf("headline severity = %d, want SevWarn", got.sev)
+	}
+
+	// The unit travels with the reading: a temp headline is not a percentage.
+	tempOnly := &internal.SystemInfo{
+		CPU:   internal.CPUInfo{UsagePercent: 10},
+		Temps: []internal.TemperatureInfo{{Name: "cpu-package", Celsius: 92}},
+	}
+	m2 := headlineTestModel()
+	m2.trackAlertOnsets("rig", tempOnly)
+	if got, _ := m2.headlineMetric("rig", tempOnly); got.unit != "°C" {
+		t.Fatalf("headline unit = %q, want °C", got.unit)
+	}
+}
+
+func TestHeadlineRecoveredSensorRetripsAsNew(t *testing.T) {
+	activeThresholds = DefaultThresholds()
+	t.Cleanup(func() { activeThresholds = DefaultThresholds() })
+
+	m := headlineTestModel()
+	gpu := []internal.GPUInfo{{Index: "0", Temperature: 95}}
+	hotRAM := internal.RAMInfo{Total: 1000, Used: 880, UsagePercent: 88}
+	calmRAM := internal.RAMInfo{Total: 1000, Used: 400, UsagePercent: 40}
+
+	// RAM trips, recovers, then trips again while the GPU stays hot throughout.
+	m.trackAlertOnsets("rig", &internal.SystemInfo{GPUs: gpu, RAM: hotRAM})
+	m.trackAlertOnsets("rig", &internal.SystemInfo{GPUs: gpu, RAM: calmRAM})
+	if _, ok := m.alertOnsets["rig"]["RAM"]; ok {
+		t.Fatal("recovered RAM alert should have been forgotten")
+	}
+	latest := &internal.SystemInfo{GPUs: gpu, RAM: hotRAM}
+	m.trackAlertOnsets("rig", latest)
+
+	if got, _ := m.headlineMetric("rig", latest); got.label != "RAM" {
+		t.Fatalf("headline = %q, want RAM (re-tripped after recovery)", got.label)
 	}
 }
 
 func TestHeadlineRendersThreeRowsOfBlockDigits(t *testing.T) {
-	info := &internal.SystemInfo{CPU: internal.CPUInfo{UsagePercent: 87}}
-	got := renderHeadline(info, 48)
+	activeThresholds = DefaultThresholds()
+	t.Cleanup(func() { activeThresholds = DefaultThresholds() })
+
+	m := headlineTestModel()
+	info := &internal.SystemInfo{CPU: internal.CPUInfo{UsagePercent: 44}}
+	got := m.renderHeadline("rig", info, 48)
 	lines := strings.Split(stripANSI(got), "\n")
 	if len(lines) != 3 {
 		t.Fatalf("expected 3 headline rows, got %d in %q", len(lines), got)
@@ -248,12 +317,37 @@ func TestHeadlineRendersThreeRowsOfBlockDigits(t *testing.T) {
 }
 
 func TestHeadlineOmittedOnNarrowTile(t *testing.T) {
+	m := headlineTestModel()
 	info := &internal.SystemInfo{CPU: internal.CPUInfo{UsagePercent: 87}}
-	if got := renderHeadline(info, headlineMinWidth-1); got != "" {
+	if got := m.renderHeadline("rig", info, headlineMinWidth-1); got != "" {
 		t.Fatalf("expected no headline below %d columns, got %q", headlineMinWidth, got)
 	}
-	if got := renderHeadline(nil, 80); got != "" {
+	if got := m.renderHeadline("rig", nil, 80); got != "" {
 		t.Fatalf("expected no headline without telemetry, got %q", got)
+	}
+}
+
+func TestHeadlineLongLabelStaysInsideTile(t *testing.T) {
+	activeThresholds = DefaultThresholds()
+	t.Cleanup(func() { activeThresholds = DefaultThresholds() })
+
+	m := headlineTestModel()
+	info := &internal.SystemInfo{
+		CPU:   internal.CPUInfo{UsagePercent: 10},
+		Temps: []internal.TemperatureInfo{{Name: "nvme-composite-sensor-alpha", Celsius: 92}},
+	}
+	m.trackAlertOnsets("rig", info)
+
+	const width = headlineMinWidth
+	got := m.renderHeadline("rig", info, width)
+	lines := strings.Split(got, "\n")
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 headline rows, got %d in %q", len(lines), got)
+	}
+	for i, line := range lines {
+		if w := lipgloss.Width(line); w > width {
+			t.Fatalf("headline row %d is %d wide, exceeds tile width %d: %q", i, w, width, line)
+		}
 	}
 }
 

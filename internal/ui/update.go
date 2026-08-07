@@ -301,6 +301,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sysInfos[msg.hostName] = msg.info
 		m.lastUpdates[msg.hostName] = now
 		m.appendMetricHistory(msg.hostName, msg.info)
+		m.trackAlertOnsets(msg.hostName, msg.info)
 
 		if m.screen == ScreenConnecting && len(m.selectedHosts) > 0 {
 			firstHost := m.selectedHosts[0]
@@ -530,6 +531,41 @@ func (m *Model) cycleFocusedHostTheme(delta int) {
 		return
 	}
 	m.quadStatus = fmt.Sprintf("%s theme: %s", host.Name, next)
+}
+
+// trackAlertOnsets records, per host, which sample each metric first went into
+// alert on. A metric that recovers loses its entry, so re-tripping later counts
+// as a fresh event; a metric that escalates (warn → crit) is re-stamped, since an
+// escalation is news worth surfacing. De-escalation keeps the original onset.
+func (m *Model) trackAlertOnsets(hostName string, info *internal.SystemInfo) {
+	if m.alertOnsets == nil {
+		m.alertOnsets = make(map[string]map[string]alertOnset)
+	}
+	if m.alertSamples == nil {
+		m.alertSamples = make(map[string]int64)
+	}
+
+	m.alertSamples[hostName]++
+	seq := m.alertSamples[hostName]
+
+	onsets := m.alertOnsets[hostName]
+	if onsets == nil {
+		onsets = make(map[string]alertOnset)
+		m.alertOnsets[hostName] = onsets
+	}
+
+	active := make(map[string]bool)
+	for _, a := range hostAlerts(info, m.settings.Thresholds) {
+		active[a.Metric] = true
+		if prev, ok := onsets[a.Metric]; !ok || a.Sev > prev.sev {
+			onsets[a.Metric] = alertOnset{seq: seq, sev: a.Sev}
+		}
+	}
+	for metric := range onsets {
+		if !active[metric] {
+			delete(onsets, metric)
+		}
+	}
 }
 
 func (m *Model) appendMetricHistory(hostName string, info *internal.SystemInfo) {

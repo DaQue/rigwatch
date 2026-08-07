@@ -118,7 +118,7 @@ func (m Model) renderHostPane(host internal.SSHHost, width, maxBodyLines int, fo
 		history := m.metricHistories[host.Name]
 		body = m.renderHostThemed(host.Name, func() string {
 			grid := renderMetricsGrid(sysInfo, history, width-2, extended)
-			headline := renderHeadline(sysInfo, width-2)
+			headline := m.renderHeadline(host.Name, sysInfo, width-2)
 			if headline == "" {
 				return grid
 			}
