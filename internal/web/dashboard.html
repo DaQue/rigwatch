@@ -93,7 +93,17 @@
   .mcard .ms { color:var(--muted); font-size:9px; text-transform:uppercase; letter-spacing:1px; margin:4px 0 2px; }
   .mcard .mf2 { display:flex; gap:4px; flex-wrap:wrap; font-size:10px; }
 
-  @media (max-width:480px) { body { padding:4px; } .hero-title { font-size:14px; } .btn { font-size:9px; padding:2px 6px; } }
+  /* ── PIA VPN ── */
+  .pia-strip { display:flex; align-items:center; gap:8px; margin-bottom:6px; padding:4px 8px; border:1px solid var(--panel-dim); font-size:11px; }
+  .pia-dot { width:8px; height:8px; border-radius:50%; display:inline-block; flex-shrink:0; }
+  .pia-dot.on { background:var(--green); box-shadow:0 0 6px var(--green); }
+  .pia-dot.stale { background:var(--amber); box-shadow:0 0 6px var(--amber); }
+  .pia-dot.off { background:var(--red); box-shadow:0 0 6px var(--red); }
+  .pia-label { color:var(--muted); font-weight:700; letter-spacing:1px; font-size:10px; text-transform:uppercase; }
+  .pia-info { color:var(--ink); }
+  .pia-muted { color:var(--muted); font-size:10px; }
+  .pia-sep { color:var(--panel-dim); }
+  .pia-bad { color:var(--red); font-size:10px; }
 </style>
 </head>
 <body>
@@ -113,6 +123,16 @@
   <button class="btn" data-view="mobile" onclick="setView('mobile')">Phone</button>
   <span class="sep">│</span>
   <button class="btn theme-btn" onclick="cycleTheme()" id="themeBtn">Theme: rigwatch</button>
+</div>
+
+<div id="piaStrip" class="pia-strip" style="display:none">
+  <span class="pia-dot" id="piaDot"></span>
+  <span class="pia-label">PIA</span>
+  <span class="pia-info" id="piaEndpoint">—</span>
+  <span class="pia-sep">│</span>
+  <span class="pia-muted" id="piaHandshake">—</span>
+  <span class="pia-sep">│</span>
+  <span class="pia-muted" id="piaTransfer">—</span>
 </div>
 
 <div id="pageNav" class="page-nav" style="display:none">
@@ -370,7 +390,38 @@ async function fetchData() {
   catch(e){document.getElementById('container').innerHTML='<div class="err-box">✗ connection error</div>';}
 }
 
-renderTitle(); animateSignal(); fetchData(); setInterval(fetchData, REFRESH_MS);
+async function fetchPIA() {
+  try {
+    const r = await fetch('/api/pia');
+    const p = await r.json();
+    const strip = document.getElementById('piaStrip');
+    const dot = document.getElementById('piaDot');
+    const ep = document.getElementById('piaEndpoint');
+    const hs = document.getElementById('piaHandshake');
+    const tr = document.getElementById('piaTransfer');
+    if (!p.connected) {
+      strip.style.display = 'flex';
+      dot.className = 'pia-dot off';
+      ep.textContent = 'disconnected';
+      hs.textContent = '';
+      tr.textContent = '';
+      return;
+    }
+    strip.style.display = 'flex';
+    const secs = p.handshake_secs || 999;
+    dot.className = secs < 300 ? 'pia-dot on' : secs < 600 ? 'pia-dot stale' : 'pia-dot off';
+    ep.textContent = p.endpoint || '—';
+    hs.textContent = 'hs ' + (p.handshake_ago || '—');
+    tr.textContent = p.transfer_rx_str + (p.transfer_tx_str ? ' ↓ / ↑ ' + p.transfer_tx_str : '');
+  } catch(e) {
+    // PIA endpoint unavailable — hide the strip silently
+    document.getElementById('piaStrip').style.display = 'none';
+  }
+}
+
+renderTitle(); animateSignal(); fetchData(); fetchPIA();
+setInterval(fetchData, REFRESH_MS);
+setInterval(fetchPIA, 5000);
 </script>
 </body>
 </html>

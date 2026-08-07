@@ -7,6 +7,9 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"os/exec"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -53,6 +56,19 @@ type metricHistory struct {
 	Network []float64
 }
 
+// PIAStatus holds the live state of the local PIA WireGuard tunnel.
+type PIAStatus struct {
+	Connected     bool   `json:"connected"`
+	PublicKey     string `json:"public_key"`
+	Endpoint      string `json:"endpoint"`
+	HandshakeAgo  string `json:"handshake_ago"`
+	HandshakeSecs int    `json:"handshake_secs"`
+	TransferRx    int64  `json:"transfer_rx"`
+	TransferTx    int64  `json:"transfer_tx"`
+	TransferRxStr string `json:"transfer_rx_str"`
+	TransferTxStr string `json:"transfer_tx_str"`
+}
+
 // Server manages data collection and HTTP serving.
 type Server struct {
 	hosts    []internal.SSHHost
@@ -61,6 +77,9 @@ type Server struct {
 
 	mu     sync.RWMutex
 	states map[string]*hostState
+
+	piaMu     sync.RWMutex
+	piaStatus *PIAStatus
 }
 
 // NewServer creates a web server that collects data from the given hosts.
@@ -89,7 +108,11 @@ func (s *Server) Start() error {
 	// HTTP routes
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/hosts", s.handleHosts)
+	mux.HandleFunc("/api/pia", s.handlePIA)
 	mux.HandleFunc("/", s.handleDashboard)
+
+	// Start PIA WireGuard polling
+	go s.piaCollectLoop()
 
 	addr := fmt.Sprintf(":%d", s.port)
 	log.Printf("rigwatch web server starting on http://0.0.0.0%s", addr)
@@ -326,4 +349,126 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	tmpl.Execute(w, data)
+}
+
+// ── PIA WireGuard status ──
+
+func (s *Server) piaCollectLoop() {
+	s.collectPIA()
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		s.collectPIA()
+	}
+}
+
+func (s *Server) collectPIA() {
+	out, err := exec.Command("wg", "show", "pia").Output()
+	if err != nil {
+		s.piaMu.Lock()
+		s.piaStatus = &PIAStatus{Connected: false}
+		s.piaMu.Unlock()
+		return
+	}
+	s.piaMu.Lock()
+	s.piaStatus = parseWgOutput(string(out))
+	s.piaMu.Unlock()
+}
+
+func parseWgOutput(out string) *PIAStatus {
+	s := &PIAStatus{Connected: true}
+	lines := strings.Split(out, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "public key:"):
+			s.PublicKey = strings.TrimSpace(strings.TrimPrefix(line, "public key:"))
+		case strings.HasPrefix(line, "endpoint:"):
+			s.Endpoint = strings.TrimSpace(strings.TrimPrefix(line, "endpoint:"))
+			if idx := strings.LastIndex(s.Endpoint, ":"); idx >= 0 {
+				s.Endpoint = s.Endpoint[:idx]
+			}
+		case strings.HasPrefix(line, "latest handshake:"):
+			raw := strings.TrimSpace(strings.TrimPrefix(line, "latest handshake:"))
+			s.HandshakeAgo = raw
+			// Parse age into seconds
+			raw = strings.TrimSuffix(raw, "ago")
+			raw = strings.TrimSpace(raw)
+			secs := 0
+			parts := strings.Split(raw, ",")
+			for _, p := range parts {
+				p = strings.TrimSpace(p)
+				fields := strings.Fields(p)
+				if len(fields) >= 2 {
+					n, err := strconv.Atoi(fields[0])
+					if err != nil {
+						continue
+					}
+					unit := fields[1]
+					if strings.HasPrefix(unit, "hour") || strings.HasPrefix(unit, "hr") {
+						secs += n * 3600
+					} else if strings.HasPrefix(unit, "minute") || strings.HasPrefix(unit, "min") {
+						secs += n * 60
+					} else if strings.HasPrefix(unit, "second") || strings.HasPrefix(unit, "sec") {
+						secs += n
+					}
+				}
+			}
+			s.HandshakeSecs = secs
+		case strings.HasPrefix(line, "transfer:"):
+			raw := strings.TrimSpace(strings.TrimPrefix(line, "transfer:"))
+			s.TransferRxStr, s.TransferTxStr, s.TransferRx, s.TransferTx = parseTransfer(raw)
+		}
+	}
+	return s
+}
+
+func parseTransfer(raw string) (rxStr, txStr string, rxBytes, txBytes int64) {
+	parts := strings.Split(raw, ",")
+	if len(parts) < 2 {
+		return raw, "", 0, 0
+	}
+	rxStr = strings.TrimSpace(parts[0])
+	txStr = strings.TrimSpace(parts[1])
+	rxBytes = parseWgBytes(rxStr)
+	txBytes = parseWgBytes(txStr)
+	return
+}
+
+func parseWgBytes(s string) int64 {
+	// e.g. "841.18 MiB received" or "124.78 MiB sent"
+	fields := strings.Fields(s)
+	if len(fields) < 2 {
+		return 0
+	}
+	val, err := strconv.ParseFloat(fields[0], 64)
+	if err != nil {
+		return 0
+	}
+	unit := fields[1]
+	switch unit {
+	case "KiB":
+		return int64(val * 1024)
+	case "MiB":
+		return int64(val * 1024 * 1024)
+	case "GiB":
+		return int64(val * 1024 * 1024 * 1024)
+	case "TiB":
+		return int64(val * 1024 * 1024 * 1024 * 1024)
+	default:
+		return int64(val)
+	}
+}
+
+func (s *Server) handlePIA(w http.ResponseWriter, r *http.Request) {
+	s.piaMu.RLock()
+	defer s.piaMu.RUnlock()
+
+	st := &PIAStatus{}
+	if s.piaStatus != nil {
+		*st = *s.piaStatus
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(st)
 }
