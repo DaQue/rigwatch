@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/allisonhere/rigwatch/internal/gpu"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
@@ -492,6 +493,7 @@ func isAllowedCommand(cmd string) bool {
 		"find -L /sys/class/hwmon -maxdepth 2 \\( -name 'temp*_input' -o -name 'temp*_label' \\) -exec grep -H . {} + 2>/dev/null || true",
 		"find -L /sys/class/hwmon -maxdepth 2 \\( -name 'fan*_input' -o -name 'fan*_label' \\) -exec grep -H . {} + 2>/dev/null || true",
 		"ps -eo pid=,comm=,pcpu=,pmem= --sort=-pcpu | head -n 25",
+		gpu.DRMProbeCommand,
 	}
 	for _, allowed := range allowedExact {
 		if cmd == allowed {
@@ -508,6 +510,7 @@ func isAllowedCommand(cmd string) bool {
 		"rocm-smi ",
 		"free -",
 		"df -",
+		"lspci ",
 	}
 
 	for _, prefix := range allowedPrefixes {
