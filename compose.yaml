@@ -2,14 +2,14 @@ services:
   rigwatch:
     build:
       context: .
-      args:
-        GIT_TAG: ${GIT_TAG:-v0.0.0}
-        GIT_COMMIT: ${GIT_COMMIT:-unknown}
-        BUILD_DATE: ${BUILD_DATE:-unknown}
+      # No build args — Dockerfile auto-derives GIT_TAG/GIT_COMMIT/BUILD_DATE
+      # from the .git dir. Override with --build-arg if needed.
     container_name: rigwatch-web
     restart: unless-stopped
-    ports:
-      - "8081:8081"
+    # Must share host network + NET_ADMIN so `wg show pia` sees the host tunnel
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
     volumes:
       # SSH config & keys for connecting to monitored hosts
       - ~/.ssh:/root/.ssh:ro
@@ -17,6 +17,8 @@ services:
       - ~/.ssh/known_hosts:/root/.ssh/known_hosts
       # Rigwatch managed SSH config (for key installs, etc.)
       - ~/.ssh/rigwatch-config.d:/root/.ssh/rigwatch-config.d:ro
+      # Host sysfs (read-only) so AMD/NVIDIA GPU detection sees the real GPU
+      - /sys:/sys:ro
     environment:
       - TZ=America/Chicago
     # Health check: the API endpoint returns JSON
