@@ -117,8 +117,8 @@ func TestRenderSparklineUsesTrendGlyphsAndWidth(t *testing.T) {
 	if width := lipgloss.Width(got); width != 8 {
 		t.Fatalf("visible width = %d, want 8 in %q", width, got)
 	}
-	if !strings.ContainsAny(got, "▁▂▃▄▅▆▇█") {
-		t.Fatalf("expected sparkline trend glyphs in %q", got)
+	if !containsBraille(got) {
+		t.Fatalf("expected braille sparkline glyphs in %q", got)
 	}
 	if colors := strings.Count(got, "\x1b[38;2;"); colors != 1 {
 		t.Fatalf("expected one-color history sparkline, got %d foreground colors in %q", colors, got)
@@ -174,7 +174,7 @@ func TestRenderCPUSectionIncludesAggregateAndCoreMiniGraphs(t *testing.T) {
 		},
 	}
 
-	got := renderCPUSectionWithHistory(cpu, nil, 96)
+	got := renderCPUSectionWithHistory(cpu, nil, 96, false)
 	for _, want := range []string{"CPU LOAD", "37.5%", "00", "03", "▄"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("rendered CPU section missing %q: %q", want, got)
@@ -198,7 +198,7 @@ func TestRenderCPUSectionAllocatesAllDeclaredCoreSlots(t *testing.T) {
 		},
 	}
 
-	got := renderCPUSectionWithHistory(cpu, nil, 96)
+	got := renderCPUSectionWithHistory(cpu, nil, 96, false)
 	for _, want := range []string{"00", "01", "02", "03"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing stable core slot %q: %q", want, got)

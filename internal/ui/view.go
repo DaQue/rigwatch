@@ -28,8 +28,11 @@ func (m Model) renderUpdateNotification() string {
 
 func (m Model) View() string {
 	// Keep the render helpers' thresholds in sync with the live settings so
-	// runtime changes (settings screen) take effect immediately.
+	// runtime changes (settings screen) take effect immediately, and publish the
+	// animation frame so panels can pulse without threading it through every
+	// render signature.
 	activeThresholds = m.settings.Thresholds
+	activeFrame = m.animationFrame
 
 	if m.helpVisible {
 		return m.renderHelp()

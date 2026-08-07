@@ -83,8 +83,8 @@ func TestFanSectionRendersTrendSparkline(t *testing.T) {
 	if !strings.Contains(got, "CPU Fan") || !strings.Contains(got, "1200 RPM") {
 		t.Fatalf("missing fan row:\n%s", got)
 	}
-	// renderSparkline draws with ▁▂▃▄▅▆▇█ glyphs.
-	if !strings.ContainsAny(got, "▁▂▃▄▅▆▇█") {
+	// renderSparkline draws with braille (U+2800..U+28FF) glyphs.
+	if !containsBraille(got) {
 		t.Fatalf("fan row missing trend sparkline:\n%s", got)
 	}
 }

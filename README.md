@@ -102,6 +102,17 @@ rigwatch
 - `s` - Exit and SSH into current host
 - `c` - Add hosts (from dashboard, returns to host selection)
 
+**Reading the dashboard:**
+
+Color is tied to your configured thresholds, not to decoration:
+
+- **Bar color encodes the value, not the bar's length.** A bar is green while the metric is below its warn level, amber past warn, and red past crit — so a long-but-nominal bar stays green and a short critical one still reads red.
+- **Panel borders carry severity.** A panel with a metric past warn turns amber and is marked `▲`; past crit it turns red, is marked `■`, and pulses. Everything else stays in the theme's border color, so the one panel worth looking at is the one that stands out.
+- **Trends are braille sparklines**, packing two samples per character. Points that crossed warn/crit stay amber/red at the moment in time they happened, so a past spike is still visible after the metric recovers. The single-host view draws them two rows tall for full vertical resolution; the grid keeps them to one row.
+- **Each tile leads with its worst reading rendered large**, so a wall of panes is scannable without reading the small type.
+
+Thresholds are configurable per metric from the settings screen (`o` from the host list). Background fills and the critical pulse require a truecolor terminal and are skipped automatically on 256-color terminals.
+
 **Themes:**
 
 Rigwatch includes per-host themes. The default theme is `rigwatch`, which preserves the original look. In quad view, focus a pane with `Tab` and cycle that host's theme with `[` / `]`. Choices are saved to your user config directory at `rigwatch/themes.json` and follow the SSH host alias across solo, overview, and quad views.
