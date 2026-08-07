@@ -32,14 +32,16 @@ func thresholdRefs() []thresholdRef {
 }
 
 // settingsFormState is the editable state of the settings screen. Focus 0 is the
-// theme cycler; focus 1 is the interval input; the remaining focuses are the
-// warn/crit inputs (two per threshold metric), in thresholdRefs() order.
+// theme cycler and focus 1 the headline cycler; focus 2 is the interval input;
+// the remaining focuses are the warn/crit inputs (two per threshold metric), in
+// thresholdRefs() order.
 type settingsFormState struct {
-	inputs    []textinput.Model // [0]=interval, then warn,crit per metric
-	themeIdx  int
-	focus     int
-	status    string
-	statusErr bool
+	inputs      []textinput.Model // [0]=interval, then warn,crit per metric
+	themeIdx    int
+	headlineIdx int
+	focus       int
+	status      string
+	statusErr   bool
 }
 
 func numericInput(value string) textinput.Model {
@@ -51,15 +53,19 @@ func numericInput(value string) textinput.Model {
 	return ti
 }
 
-// focusCount is the number of focus stops: theme + interval + 2 per metric.
-func (s *settingsFormState) focusCount() int { return 1 + len(s.inputs) }
+// settingsCyclerRows is how many leading focus stops are ←/→ cyclers rather than
+// text inputs: the theme picker and the headline picker.
+const settingsCyclerRows = 2
 
-// inputIndexFor maps a focus index to an inputs[] index, or -1 for the theme row.
+// focusCount is the number of focus stops: the cyclers + interval + 2 per metric.
+func (s *settingsFormState) focusCount() int { return settingsCyclerRows + len(s.inputs) }
+
+// inputIndexFor maps a focus index to an inputs[] index, or -1 for a cycler row.
 func inputIndexFor(focus int) int {
-	if focus == 0 {
+	if focus < settingsCyclerRows {
 		return -1
 	}
-	return focus - 1
+	return focus - settingsCyclerRows
 }
 
 func formatThreshold(v float64) string {
@@ -94,7 +100,15 @@ func (m *Model) openSettings() {
 		}
 	}
 
-	m.settingsForm = &settingsFormState{inputs: inputs, themeIdx: themeIdx, focus: 0}
+	headlineIdx := 0
+	for i, mode := range HeadlineModes() {
+		if mode == m.settings.HeadlineMode {
+			headlineIdx = i
+			break
+		}
+	}
+
+	m.settingsForm = &settingsFormState{inputs: inputs, themeIdx: themeIdx, headlineIdx: headlineIdx, focus: 0}
 	m.screen = ScreenSettings
 	m.setSettingsFocus(0)
 }
@@ -139,13 +153,21 @@ func (m Model) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.setSettingsFocus(s.focus - 1)
 		return m, textinput.Blink
 	case "left":
-		if s.focus == 0 {
+		switch s.focus {
+		case 0:
 			s.themeIdx = (s.themeIdx - 1 + len(ThemeNames())) % len(ThemeNames())
+			return m, nil
+		case 1:
+			s.headlineIdx = (s.headlineIdx - 1 + len(HeadlineModes())) % len(HeadlineModes())
 			return m, nil
 		}
 	case "right":
-		if s.focus == 0 {
+		switch s.focus {
+		case 0:
 			s.themeIdx = (s.themeIdx + 1) % len(ThemeNames())
+			return m, nil
+		case 1:
+			s.headlineIdx = (s.headlineIdx + 1) % len(HeadlineModes())
 			return m, nil
 		}
 	}
@@ -186,6 +208,7 @@ func (m Model) saveSettingsForm() (tea.Model, tea.Cmd) {
 		Interval:                 interval,
 		DefaultTheme:             ThemeNames()[s.themeIdx],
 		Thresholds:               thresholds,
+		HeadlineMode:             HeadlineModes()[s.headlineIdx],
 		ShowExtendedPanels:       m.settings.ShowExtendedPanels,
 		CheckForUpdates:          m.settings.CheckForUpdates,
 		UpdateCheckIntervalHours: m.settings.UpdateCheckIntervalHours,
@@ -228,7 +251,7 @@ func (m Model) renderSettingsScreen() string {
 	}
 
 	var b strings.Builder
-	subtitle := "↑/↓ move  •  ←/→ change theme  •  type to edit  •  enter save  •  esc cancel"
+	subtitle := "↑/↓ move  •  ←/→ change option  •  type to edit  •  enter save  •  esc cancel"
 	b.WriteString(renderHeroHeader("RIGWATCH // SETTINGS", subtitle, m.width, m.animationFrame))
 	b.WriteString("\n\n")
 
@@ -247,8 +270,14 @@ func (m Model) renderSettingsScreen() string {
 	b.WriteString(accentStyle.Render("‹ " + themeName + " ›"))
 	b.WriteString("\n")
 
-	// Interval row (focus 1 / inputs[0]).
-	b.WriteString(label("Refresh interval", s.focus == 1))
+	// Headline row (focus 1).
+	b.WriteString(label("Tile headline", s.focus == 1))
+	b.WriteString(accentStyle.Render("‹ " + HeadlineModes()[s.headlineIdx] + " ›"))
+	b.WriteString(mutedStyle.Render("  big alert reading per tile"))
+	b.WriteString("\n")
+
+	// Interval row (focus 2 / inputs[0]).
+	b.WriteString(label("Refresh interval", s.focus == 2))
 	b.WriteString(s.inputs[0].View())
 	b.WriteString(mutedStyle.Render(" sec (blank = default)"))
 	b.WriteString("\n\n")
@@ -257,8 +286,8 @@ func (m Model) renderSettingsScreen() string {
 	b.WriteString("\n")
 	refs := thresholdRefs()
 	for i, ref := range refs {
-		warnFocus := s.focus == 2+i*2
-		critFocus := s.focus == 3+i*2
+		warnFocus := s.focus == 3+i*2
+		critFocus := s.focus == 4+i*2
 		b.WriteString(label(ref.label, warnFocus || critFocus))
 		b.WriteString(s.inputs[1+i*2].View())
 		b.WriteString("  ")

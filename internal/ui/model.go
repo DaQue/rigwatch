@@ -45,6 +45,8 @@ type Model struct {
 	updateInfo        internal.UpdateInfo
 	animationFrame    int
 	metricHistories   map[string]metricHistory
+	alertOnsets       map[string]map[string]alertOnset // host -> metric -> when it entered alert
+	alertSamples      map[string]int64                 // host -> monotonic poll counter
 	quadPage          int
 	quadFocus         int
 	headerFocus       int    // grid header toolbar focus; -1 = a pane is focused
@@ -225,6 +227,8 @@ func InitialModel(hosts []internal.SSHHost, updateInterval time.Duration) Model 
 		failedHosts:       make(map[string]error),
 		passwords:         make(map[string]string),
 		metricHistories:   make(map[string]metricHistory),
+		alertOnsets:       make(map[string]map[string]alertOnset),
+		alertSamples:      make(map[string]int64),
 		updateInterval:    updateInterval,
 		themePrefs:        loadThemePreferencesOrDefault(),
 		settings:          loadSettingsOrDefault(),
@@ -272,6 +276,8 @@ func InitialModelWithHosts(allHosts []internal.SSHHost, selectedHosts []internal
 		failedHosts:       make(map[string]error),
 		passwords:         make(map[string]string),
 		metricHistories:   make(map[string]metricHistory),
+		alertOnsets:       make(map[string]map[string]alertOnset),
+		alertSamples:      make(map[string]int64),
 		updateInterval:    updateInterval,
 		themePrefs:        loadThemePreferencesOrDefault(),
 		settings:          loadSettingsOrDefault(),

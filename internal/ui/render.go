@@ -128,7 +128,7 @@ func (m Model) renderSingleHostOverviewThemed(host internal.SSHHost, width int) 
 	var b strings.Builder
 	// Lead with the worst reading rendered large, so a wall of tiles is scannable
 	// without reading any of the small type.
-	if headline := renderHeadline(sysInfo, width); headline != "" {
+	if headline := m.renderHeadline(host.Name, sysInfo, width); headline != "" {
 		b.WriteString(headline)
 		b.WriteString("\n\n")
 	}

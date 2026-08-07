@@ -204,37 +204,106 @@ func TestLabeledTrendIndentsContinuationRows(t *testing.T) {
 	}
 }
 
-func TestDominantMetricPicksWorstSeverity(t *testing.T) {
+// headlineTestModel is a Model with just the state the headline needs.
+func headlineTestModel() Model {
+	return Model{
+		alertOnsets:  map[string]map[string]alertOnset{},
+		alertSamples: map[string]int64{},
+		settings:     DefaultSettings(),
+	}
+}
+
+func TestHeadlineFallsBackToCPULoadWithNoAlerts(t *testing.T) {
 	activeThresholds = DefaultThresholds()
 	t.Cleanup(func() { activeThresholds = DefaultThresholds() })
 
-	// RAM is critical while CPU is merely higher in raw value: severity wins.
+	m := headlineTestModel()
+	// RAM is the larger raw reading, but nothing is in alert, so CPU still leads.
 	info := &internal.SystemInfo{
-		CPU: internal.CPUInfo{UsagePercent: 99},
-		RAM: internal.RAMInfo{Total: 1000, Used: 970, UsagePercent: 97},
-	}
-	got, ok := dominantMetric(info)
-	if !ok {
-		t.Fatal("expected a headline reading")
-	}
-	if got.sev != SevCrit {
-		t.Fatalf("headline severity = %d, want SevCrit", got.sev)
-	}
-
-	// With everything nominal the largest raw value leads.
-	calm := &internal.SystemInfo{
 		CPU: internal.CPUInfo{UsagePercent: 12},
 		RAM: internal.RAMInfo{Total: 1000, Used: 400, UsagePercent: 40},
 	}
-	got, _ = dominantMetric(calm)
-	if got.label != "RAM USED" {
-		t.Fatalf("headline = %q, want RAM USED (the higher nominal reading)", got.label)
+	m.trackAlertOnsets("rig", info)
+
+	got, ok := m.headlineMetric("rig", info)
+	if !ok {
+		t.Fatal("expected a headline reading")
+	}
+	if got.label != "CPU LOAD" || got.unit != "%" {
+		t.Fatalf("headline = %q %q, want CPU LOAD %%", got.label, got.unit)
+	}
+}
+
+func TestHeadlinePicksMostRecentlyTrippedSensor(t *testing.T) {
+	activeThresholds = DefaultThresholds()
+	t.Cleanup(func() { activeThresholds = DefaultThresholds() })
+
+	m := headlineTestModel()
+	// Sample 1: a GPU runs critically hot (90C >= GPUTempC crit).
+	hot := &internal.SystemInfo{
+		CPU:  internal.CPUInfo{UsagePercent: 10},
+		GPUs: []internal.GPUInfo{{Index: "0", Temperature: 95}},
+	}
+	m.trackAlertOnsets("rig", hot)
+
+	// Sample 2: the GPU stays critical, but RAM newly crosses its warn line.
+	both := &internal.SystemInfo{
+		CPU:  internal.CPUInfo{UsagePercent: 10},
+		GPUs: []internal.GPUInfo{{Index: "0", Temperature: 95}},
+		RAM:  internal.RAMInfo{Total: 1000, Used: 880, UsagePercent: 88},
+	}
+	m.trackAlertOnsets("rig", both)
+
+	got, _ := m.headlineMetric("rig", both)
+	if got.label != "RAM" {
+		t.Fatalf("headline = %q, want RAM (newest alert beats the older critical)", got.label)
+	}
+	if got.sev != SevWarn {
+		t.Fatalf("headline severity = %d, want SevWarn", got.sev)
+	}
+
+	// The unit travels with the reading: a temp headline is not a percentage.
+	tempOnly := &internal.SystemInfo{
+		CPU:   internal.CPUInfo{UsagePercent: 10},
+		Temps: []internal.TemperatureInfo{{Name: "cpu-package", Celsius: 92}},
+	}
+	m2 := headlineTestModel()
+	m2.trackAlertOnsets("rig", tempOnly)
+	if got, _ := m2.headlineMetric("rig", tempOnly); got.unit != "°C" {
+		t.Fatalf("headline unit = %q, want °C", got.unit)
+	}
+}
+
+func TestHeadlineRecoveredSensorRetripsAsNew(t *testing.T) {
+	activeThresholds = DefaultThresholds()
+	t.Cleanup(func() { activeThresholds = DefaultThresholds() })
+
+	m := headlineTestModel()
+	gpu := []internal.GPUInfo{{Index: "0", Temperature: 95}}
+	hotRAM := internal.RAMInfo{Total: 1000, Used: 880, UsagePercent: 88}
+	calmRAM := internal.RAMInfo{Total: 1000, Used: 400, UsagePercent: 40}
+
+	// RAM trips, recovers, then trips again while the GPU stays hot throughout.
+	m.trackAlertOnsets("rig", &internal.SystemInfo{GPUs: gpu, RAM: hotRAM})
+	m.trackAlertOnsets("rig", &internal.SystemInfo{GPUs: gpu, RAM: calmRAM})
+	if _, ok := m.alertOnsets["rig"]["RAM"]; ok {
+		t.Fatal("recovered RAM alert should have been forgotten")
+	}
+	latest := &internal.SystemInfo{GPUs: gpu, RAM: hotRAM}
+	m.trackAlertOnsets("rig", latest)
+
+	if got, _ := m.headlineMetric("rig", latest); got.label != "RAM" {
+		t.Fatalf("headline = %q, want RAM (re-tripped after recovery)", got.label)
 	}
 }
 
 func TestHeadlineRendersThreeRowsOfBlockDigits(t *testing.T) {
-	info := &internal.SystemInfo{CPU: internal.CPUInfo{UsagePercent: 87}}
-	got := renderHeadline(info, 48)
+	activeThresholds = DefaultThresholds()
+	t.Cleanup(func() { activeThresholds = DefaultThresholds() })
+
+	m := headlineTestModel()
+	info := &internal.SystemInfo{CPU: internal.CPUInfo{UsagePercent: 44}}
+	got := m.renderHeadline("rig", info, 48)
 	lines := strings.Split(stripANSI(got), "\n")
 	if len(lines) != 3 {
 		t.Fatalf("expected 3 headline rows, got %d in %q", len(lines), got)
@@ -248,16 +317,41 @@ func TestHeadlineRendersThreeRowsOfBlockDigits(t *testing.T) {
 }
 
 func TestHeadlineOmittedOnNarrowTile(t *testing.T) {
+	m := headlineTestModel()
 	info := &internal.SystemInfo{CPU: internal.CPUInfo{UsagePercent: 87}}
-	if got := renderHeadline(info, headlineMinWidth-1); got != "" {
+	if got := m.renderHeadline("rig", info, headlineMinWidth-1); got != "" {
 		t.Fatalf("expected no headline below %d columns, got %q", headlineMinWidth, got)
 	}
-	if got := renderHeadline(nil, 80); got != "" {
+	if got := m.renderHeadline("rig", nil, 80); got != "" {
 		t.Fatalf("expected no headline without telemetry, got %q", got)
 	}
 }
 
-func TestHostPaneHeadlineYieldsToPanelsWhenItWouldNotFit(t *testing.T) {
+func TestHeadlineLongLabelStaysInsideTile(t *testing.T) {
+	activeThresholds = DefaultThresholds()
+	t.Cleanup(func() { activeThresholds = DefaultThresholds() })
+
+	m := headlineTestModel()
+	info := &internal.SystemInfo{
+		CPU:   internal.CPUInfo{UsagePercent: 10},
+		Temps: []internal.TemperatureInfo{{Name: "nvme-composite-sensor-alpha", Celsius: 92}},
+	}
+	m.trackAlertOnsets("rig", info)
+
+	const width = headlineMinWidth
+	got := m.renderHeadline("rig", info, width)
+	lines := strings.Split(got, "\n")
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 headline rows, got %d in %q", len(lines), got)
+	}
+	for i, line := range lines {
+		if w := lipgloss.Width(line); w > width {
+			t.Fatalf("headline row %d is %d wide, exceeds tile width %d: %q", i, w, width, line)
+		}
+	}
+}
+
+func TestHostPaneAlwaysCarriesHeadline(t *testing.T) {
 	host := internal.SSHHost{Name: "rig"}
 	info := &internal.SystemInfo{
 		CPU: internal.CPUInfo{Usage: "44%", UsagePercent: 44},
@@ -274,12 +368,13 @@ func TestHostPaneHeadlineYieldsToPanelsWhenItWouldNotFit(t *testing.T) {
 	grid := renderMetricsGrid(info, metricHistory{}, 78, false)
 	exact := countRenderedLines(grid)
 
-	// A pane with room for the grid but not the extra four headline rows must
-	// keep the panels intact.
-	if got := m.renderHostPane(host, 80, exact+2, false, false); containsBigDigits(got) {
-		t.Fatalf("headline displaced panels on a pane with no spare rows:\n%s", got)
+	// A pane with room for the grid but not the extra four headline rows still
+	// leads with the headline: every tile in the grid must carry one, so the
+	// panels take the truncation.
+	if got := m.renderHostPane(host, 80, exact+2, false, false); !containsBigDigits(got) {
+		t.Fatalf("headline missing on a pane with no spare rows:\n%s", got)
 	}
-	// Give it the four rows and the headline appears.
+	// Roomy pane: headline present, as before.
 	if got := m.renderHostPane(host, 80, exact+6, false, false); !containsBigDigits(got) {
 		t.Fatalf("headline missing on a pane with room for it:\n%s", got)
 	}
@@ -307,5 +402,71 @@ func TestBigDigitsAreUniformWidth(t *testing.T) {
 				t.Fatalf("digit %q row %d width = %d, want %d", digit, row, lipgloss.Width(line), bigDigitWidth)
 			}
 		}
+	}
+}
+
+func TestHeadlineModeControlsSize(t *testing.T) {
+	activeThresholds = DefaultThresholds()
+	t.Cleanup(func() { activeThresholds = DefaultThresholds() })
+
+	info := &internal.SystemInfo{
+		CPU:  internal.CPUInfo{UsagePercent: 10},
+		Disk: []internal.DiskInfo{{MountPoint: "/home", UsagePercent: "97%"}},
+	}
+
+	m := headlineTestModel()
+	m.trackAlertOnsets("rig", info)
+
+	// Large: three rows of block digits.
+	m.settings.HeadlineMode = HeadlineLarge
+	large := m.renderHeadline("rig", info, 48)
+	if n := countRenderedLines(large); n != 3 {
+		t.Fatalf("large headline = %d rows, want 3:\n%s", n, large)
+	}
+	if !containsBigDigits(large) {
+		t.Fatalf("large headline missing block digits:\n%s", large)
+	}
+
+	// Compact: one row, same reading, no block digits.
+	m.settings.HeadlineMode = HeadlineCompact
+	compact := m.renderHeadline("rig", info, 48)
+	if n := countRenderedLines(compact); n != 1 {
+		t.Fatalf("compact headline = %d rows, want 1: %q", n, compact)
+	}
+	if containsBigDigits(compact) {
+		t.Fatalf("compact headline should not use block digits: %q", compact)
+	}
+	plain := stripANSI(compact)
+	if !strings.Contains(plain, "97%") || !strings.Contains(plain, "DISK /HOME") {
+		t.Fatalf("compact headline missing the reading: %q", plain)
+	}
+	if w := lipgloss.Width(compact); w > 48 {
+		t.Fatalf("compact headline is %d wide, exceeds 48: %q", w, plain)
+	}
+
+	// Off: nothing at all, at any width.
+	m.settings.HeadlineMode = HeadlineOff
+	if got := m.renderHeadline("rig", info, 200); got != "" {
+		t.Fatalf("headline rendered while off: %q", got)
+	}
+}
+
+func TestHostPaneHeadlineModeOffLeavesOnlyPanels(t *testing.T) {
+	host := internal.SSHHost{Name: "rig"}
+	info := &internal.SystemInfo{
+		CPU: internal.CPUInfo{Usage: "44%", UsagePercent: 44},
+		RAM: internal.RAMInfo{Total: 1000, Used: 400, UsagePercent: 40},
+	}
+	m := Model{
+		selectedHosts:   []internal.SSHHost{host},
+		sysInfos:        map[string]*internal.SystemInfo{"rig": info},
+		metricHistories: map[string]metricHistory{},
+		settings:        DefaultSettings(),
+		themePrefs:      ThemePreferences{Hosts: map[string]string{}},
+	}
+	m.settings.HeadlineMode = HeadlineOff
+
+	if got := m.renderHostPane(host, 80, 40, false, false); containsBigDigits(got) {
+		t.Fatalf("headline rendered on a pane with the setting off:\n%s", got)
 	}
 }

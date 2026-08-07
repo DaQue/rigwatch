@@ -111,3 +111,51 @@ func TestLoadSettingsBackfillsPartialFile(t *testing.T) {
 		t.Fatalf("UpdateCheckIntervalHours = %d, want 24", s.UpdateCheckIntervalHours)
 	}
 }
+
+func TestHeadlineModeDefaultsToLarge(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	if got := DefaultSettings().HeadlineMode; got != HeadlineLarge {
+		t.Fatalf("default headline mode = %q, want %q", got, HeadlineLarge)
+	}
+
+	// A settings file written before this field existed, and a hand-edited file
+	// with a typo, both fall back to large rather than silently hiding the
+	// headline.
+	for _, raw := range []string{`{"default_theme":"nord"}`, `{"headline_mode":"huge"}`} {
+		path, err := settingsPath()
+		if err != nil {
+			t.Fatalf("settingsPath: %v", err)
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		loaded, err := LoadSettings()
+		if err != nil {
+			t.Fatalf("LoadSettings(%s): %v", raw, err)
+		}
+		if loaded.HeadlineMode != HeadlineLarge {
+			t.Fatalf("headline mode from %s = %q, want %q", raw, loaded.HeadlineMode, HeadlineLarge)
+		}
+	}
+}
+
+func TestHeadlineModeRoundTrips(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	in := DefaultSettings()
+	in.HeadlineMode = HeadlineOff
+	if err := SaveSettings(in); err != nil {
+		t.Fatalf("SaveSettings: %v", err)
+	}
+	loaded, err := LoadSettings()
+	if err != nil {
+		t.Fatalf("LoadSettings: %v", err)
+	}
+	if loaded.HeadlineMode != HeadlineOff {
+		t.Fatalf("headline mode = %q, want %q", loaded.HeadlineMode, HeadlineOff)
+	}
+}

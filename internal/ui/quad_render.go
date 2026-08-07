@@ -118,19 +118,17 @@ func (m Model) renderHostPane(host internal.SSHHost, width, maxBodyLines int, fo
 		history := m.metricHistories[host.Name]
 		body = m.renderHostThemed(host.Name, func() string {
 			grid := renderMetricsGrid(sysInfo, history, width-2, extended)
-			headline := renderHeadline(sysInfo, width-2)
+			headline := m.renderHeadline(host.Name, sysInfo, width-2)
 			if headline == "" {
 				return grid
 			}
-			// The headline costs four rows. Spend them when they fit, or when the
-			// grid was already going to be truncated at this height — in that case
-			// the rows were being lost anyway, and a readable headline is worth
-			// more than four more rows of a panel that is cut off regardless.
-			withHeadline := headline + "\n\n" + grid
-			if countRenderedLines(withHeadline) <= maxBodyLines || countRenderedLines(grid) > maxBodyLines {
-				return withHeadline
-			}
-			return grid
+			// The headline costs four rows, and it always gets them. Deciding per
+			// pane whether they fit made the grid inconsistent: hosts with more
+			// GPUs or disks build a taller grid, so on one screen some tiles
+			// carried a big number and others did not, which is precisely the
+			// scan the headline exists to serve. Uniform beats complete — the
+			// grid absorbs the truncation instead.
+			return headline + "\n\n" + grid
 		})
 		// The metric grid uses capped card widths, so on a wide pane it can be
 		// narrower than the available space. Center the block inside the pane so
