@@ -11,10 +11,9 @@ services:
     # a loud warning is logged at startup when binding all interfaces.
     # ENTRYPOINT is already `rigwatch`, so args only (no binary name)
     command: ["--web", "--port", "8081", "--bind", "0.0.0.0"]
-    # Must share host network + NET_ADMIN so `wg show pia` sees the host tunnel
+    # Must share host network so SSH to monitored hosts uses the host's routes
+    # and the web server binds directly on the host interfaces.
     network_mode: host
-    cap_add:
-      - NET_ADMIN
     volumes:
       # SSH config & keys for connecting to monitored hosts
       - ~/.ssh:/root/.ssh:ro
