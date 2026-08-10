@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/allisonhere/rigwatch/internal"
+	"github.com/allisonhere/rigwatch/internal/pia"
 	"github.com/allisonhere/rigwatch/internal/ui"
 )
 
@@ -68,6 +69,11 @@ type Server struct {
 
 	mu     sync.RWMutex
 	states map[string]*hostState
+
+	// pia polls the local PIA WireGuard tunnel. Fork-only feature (upstream
+	// mainline intentionally does not ship VPN monitoring); wired in here as
+	// the single integration point for internal/pia.
+	pia *pia.Poller
 }
 
 // NewServer creates a web server that collects data from the given hosts.
@@ -99,10 +105,14 @@ func (s *Server) Start() error {
 	// Start background collection
 	go s.collectLoop()
 
+	// Fork-only: poll local PIA WireGuard tunnel for the dashboard strip.
+	s.pia = pia.New(5 * time.Second)
+
 	// HTTP routes
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/hosts", s.handleHosts)
 	mux.HandleFunc("/api/settings", s.handleSettings)
+	mux.HandleFunc("/api/pia", s.handlePIA)
 	mux.HandleFunc("/", s.handleDashboard)
 
 	addr := fmt.Sprintf("%s:%d", s.bind, s.port)
@@ -132,6 +142,17 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		settings = ui.DefaultSettings()
 	}
 	json.NewEncoder(w).Encode(settings)
+}
+
+// handlePIA serves the current local PIA tunnel state. Fork-only feature.
+func (s *Server) handlePIA(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.pia == nil {
+		// Poller not started (tests construct the Server directly).
+		json.NewEncoder(w).Encode(pia.Status{Connected: false})
+		return
+	}
+	json.NewEncoder(w).Encode(s.pia.Status())
 }
 
 func (s *Server) connectAll() {

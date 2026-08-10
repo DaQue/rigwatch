@@ -145,3 +145,24 @@ func TestHostsEmptyList(t *testing.T) {
 		t.Errorf("hosts body = %q, want []", body)
 	}
 }
+
+// TestPIAServesJSON is fork-only: /api/pia exists only when the web server is
+// built with the PIA integration (web-dashboard-pia branch).
+func TestPIAServesJSON(t *testing.T) {
+	s := newTestServer(5*time.Second, "127.0.0.1")
+	req := httptest.NewRequest(http.MethodGet, "/api/pia", nil)
+	rec := httptest.NewRecorder()
+
+	s.handlePIA(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("pia body is not valid JSON: %v", err)
+	}
+	if _, ok := payload["connected"]; !ok {
+		t.Errorf("pia payload missing connected key")
+	}
+}
