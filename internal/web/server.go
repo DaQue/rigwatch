@@ -141,7 +141,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		// still has consistent thresholds to render with.
 		settings = ui.DefaultSettings()
 	}
-	json.NewEncoder(w).Encode(settings)
+	if err := json.NewEncoder(w).Encode(settings); err != nil {
+		log.Printf("handleSettings: encode: %v", err)
+	}
 }
 
 // handlePIA serves the current local PIA tunnel state. Fork-only feature.
@@ -149,10 +151,14 @@ func (s *Server) handlePIA(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if s.pia == nil {
 		// Poller not started (tests construct the Server directly).
-		json.NewEncoder(w).Encode(pia.Status{Connected: false})
+		if err := json.NewEncoder(w).Encode(pia.Status{Connected: false}); err != nil {
+			log.Printf("handlePIA: encode: %v", err)
+		}
 		return
 	}
-	json.NewEncoder(w).Encode(s.pia.Status())
+	if err := json.NewEncoder(w).Encode(s.pia.Status()); err != nil {
+		log.Printf("handlePIA: encode: %v", err)
+	}
 }
 
 func (s *Server) connectAll() {
@@ -234,7 +240,7 @@ func (s *Server) collectOne(host internal.SSHHost) {
 	if err != nil {
 		st.err = fmt.Errorf("collect: %w", err)
 		if client != nil {
-			client.Close()
+			_ = client.Close()
 		}
 		st.client = nil
 		return
@@ -341,7 +347,9 @@ func (s *Server) handleHosts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(snapshots)
+	if err := json.NewEncoder(w).Encode(snapshots); err != nil {
+		log.Printf("handleHosts: encode: %v", err)
+	}
 }
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
@@ -381,5 +389,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'")
-	tmpl.Execute(w, data)
+	if err := tmpl.Execute(w, data); err != nil {
+		log.Printf("handleDashboard: render: %v", err)
+	}
 }
