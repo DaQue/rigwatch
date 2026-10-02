@@ -111,7 +111,7 @@ func (m Model) renderConnectPasswordPrompt() string {
 		b.WriteString(mutedStyle.Render(fmt.Sprintf("Host %d of %d", m.pwIndex+1, len(m.pwQueue))))
 		b.WriteString("\n")
 	}
-	b.WriteString(fmt.Sprintf("Password for %s\n", accentStyle.Render(hostName)))
+	fmt.Fprintf(&b, "Password for %s\n", accentStyle.Render(hostName))
 	b.WriteString(mutedStyle.Render(fmt.Sprintf("Authenticating as %s", user)))
 	b.WriteString("\n\n")
 	b.WriteString("Password  " + m.passwordInput.View())

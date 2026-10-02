@@ -53,7 +53,7 @@ func fetchLatestVersion() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("github api returned status %d", resp.StatusCode)
@@ -86,8 +86,8 @@ func compareVersions(current, latest string) bool {
 
 	for i := 0; i < 3; i++ {
 		var currentNum, latestNum int
-		fmt.Sscanf(currentParts[i], "%d", &currentNum)
-		fmt.Sscanf(latestParts[i], "%d", &latestNum)
+		_, _ = fmt.Sscanf(currentParts[i], "%d", &currentNum)
+		_, _ = fmt.Sscanf(latestParts[i], "%d", &latestNum)
 
 		if latestNum > currentNum {
 			return true

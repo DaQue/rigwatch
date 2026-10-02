@@ -90,7 +90,7 @@ func parseSSHConfigRecursive(configPath string, visited map[string]bool) ([]SSHH
 		}
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	var hosts []SSHHost
 	var currentHost *SSHHost
@@ -297,10 +297,11 @@ func getValidatedUsername() string {
 	}
 
 	for _, char := range user {
-		if !((char >= 'a' && char <= 'z') ||
+		isAllowed := (char >= 'a' && char <= 'z') ||
 			(char >= 'A' && char <= 'Z') ||
 			(char >= '0' && char <= '9') ||
-			char == '_' || char == '-' || char == '.') {
+			char == '_' || char == '-' || char == '.'
+		if !isAllowed {
 			return ""
 		}
 	}
@@ -490,11 +491,12 @@ func isAllowedCommand(cmd string) bool {
 		"cat /proc/uptime",
 		"grep -H . /sys/class/thermal/thermal_zone*/type /sys/class/thermal/thermal_zone*/temp",
 		"grep -H . /sys/class/hwmon/hwmon*/temp*_label /sys/class/hwmon/hwmon*/temp*_input 2>/dev/null || true",
-		gpu.DRMProbeCommand,
 		"find -L /sys/class/hwmon -maxdepth 2 \\( -name 'temp*_input' -o -name 'temp*_label' \\) -exec grep -H . {} + 2>/dev/null || true",
 		"find -L /sys/class/hwmon -maxdepth 2 \\( -name 'fan*_input' -o -name 'fan*_label' \\) -exec grep -H . {} + 2>/dev/null || true",
 		"ps -eo pid=,comm=,pcpu=,pmem= --sort=-pcpu | head -n 25",
 		gpu.DRMProbeCommand,
+		gpu.DRMProcessCommand,
+		cpuFreqCommand,
 	}
 	for _, allowed := range allowedExact {
 		if cmd == allowed {
@@ -505,13 +507,13 @@ func isAllowedCommand(cmd string) bool {
 	allowedPrefixes := []string{
 		"lscpu ",
 		"top -",
+		"env LC_ALL=C top -",
 		"which ",
 		"nvidia-smi ",
 		"amd-smi ",
 		"rocm-smi ",
 		"free -",
 		"df -",
-		"cat /sys/class/drm/",
 		"lspci ",
 	}
 
@@ -548,7 +550,7 @@ func (c *SSHClient) ExecuteCommand(cmd string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer session.Close()
+	defer func() { _ = session.Close() }()
 
 	type commandResult struct {
 		output []byte

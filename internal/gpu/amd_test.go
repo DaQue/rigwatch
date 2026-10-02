@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/allisonhere/rigwatch/internal/gpu/base"
 )
 
 // drmProbeFixture is a realistic grep -H . sweep of /sys/class/drm on a machine
@@ -116,9 +118,9 @@ func TestAMDSysfsReportsEveryDiscreteCard(t *testing.T) {
 	if devices[0].Name != "AMD Radeon GPU" {
 		t.Errorf("Name = %q, want the generic fallback", devices[0].Name)
 	}
-	// amdgpu did not expose a cap here, so the conservative default stands in.
-	if devices[0].PowerLimit != 700 {
-		t.Errorf("PowerLimit = %d, want the 700 W fallback", devices[0].PowerLimit)
+	// amdgpu did not expose a cap here; report unknown (0) rather than invent one.
+	if devices[0].PowerLimit != 0 {
+		t.Errorf("PowerLimit = %d, want 0 (unknown)", devices[0].PowerLimit)
 	}
 }
 
@@ -151,22 +153,107 @@ func TestAMDSysfsSurvivesAnEmptyProbe(t *testing.T) {
 }
 
 func TestAMDVendorToolingStillWins(t *testing.T) {
-	// rocm-smi present: the sysfs path must not be taken.
-	probed := false
-	_, _ = AMDProvider{}.Query(func(cmd string) (string, error) {
+	// rocm-smi present: devices come from it, not from sysfs discovery. (sysfs is
+	// still read afterwards to add clocks, so a probe alone proves nothing.)
+	devices, _ := AMDProvider{}.Query(func(cmd string) (string, error) {
 		switch {
 		case cmd == "which rocm-smi":
 			return "/usr/bin/rocm-smi", nil
 		case cmd == DRMProbeCommand:
-			probed = true
 			return "", nil
 		case strings.HasPrefix(cmd, "rocm-smi"):
-			return "device,temp,x,power,use,y,mem\ncard0,60,,150,42,,50\n", nil
+			return "device,Temperature (Sensor edge) (C),GPU use (%)\ncard0,60,42\n", nil
 		default:
 			return "", fmt.Errorf("not installed")
 		}
 	})
-	if probed {
-		t.Fatal("sysfs probed even though rocm-smi is installed")
+	if len(devices) != 1 || devices[0].Utilization != 42 || devices[0].Temperature != 60 {
+		t.Fatalf("devices = %+v, want the one card rocm-smi reported", devices)
+	}
+}
+
+// Captured from a Strix Halo box: a warning line precedes the table, and the
+// columns do not sit where older ROCm releases put them.
+func TestParseRocmSmiCSVReadsColumnsByName(t *testing.T) {
+	out := `WARNING: AMD GPU device(s) is/are in a low-power state. Check power control/runtime_status
+
+device,Temperature (Sensor edge) (C),Current Socket Graphics Package Power (W),GPU use (%),VRAM Total Memory (B),VRAM Total Used Memory (B),Card Series,Card Model,Card Vendor,Card SKU,Subsystem ID,Device Rev,Node ID,GUID,GFX Version
+card0,54.0,20.358,2,536870912,511442944,AMD Radeon 8060S Graphics,0x1586,Advanced Micro Devices Inc. [AMD/ATI],STRXLGEN,0x1fb3,0xc1,1,64042,gfx1151
+card1,40.0,100.0,97,17163091968,8581545984,AMD Radeon RX 9070 XT,0x7550,Advanced Micro Devices Inc. [AMD/ATI],X,0x1,0xc0,2,1,gfx1201
+`
+	devices := parseRocmSmiCSV(out)
+	if len(devices) != 2 {
+		t.Fatalf("got %d devices, want 2: %+v", len(devices), devices)
+	}
+	d := devices[0]
+	if d.Name != "AMD Radeon 8060S Graphics" || d.Utilization != 2 || d.Temperature != 54 || d.PowerDraw != 20 ||
+		d.VRAMTotal != 512 || d.VRAMUsed != 487 || d.PowerLimit != 0 {
+		t.Errorf("card0 = %+v", d)
+	}
+	if devices[1].Index != 1 || devices[1].Utilization != 97 || devices[1].VRAMTotal != 16368 || devices[1].VRAMUsed != 8184 {
+		t.Errorf("card1 = %+v", devices[1])
+	}
+	if parseRocmSmiCSV("WARNING only") != nil {
+		t.Error("expected nil without a table")
+	}
+}
+
+func TestParseDRMProcessesDedupesFdsAndSumsClients(t *testing.T) {
+	out := `/proc/100/fdinfo/29:drm-driver:	amdgpu
+/proc/100/fdinfo/29:drm-client-id:	59
+/proc/100/fdinfo/29:drm-pdev:	0000:c4:00.0
+/proc/100/fdinfo/29:drm-memory-vram:	2048 KiB
+/proc/100/fdinfo/29:drm-engine-gfx:	1000 ns
+/proc/100/fdinfo/30:drm-driver:	amdgpu
+/proc/100/fdinfo/30:drm-client-id:	59
+/proc/100/fdinfo/30:drm-pdev:	0000:c4:00.0
+/proc/100/fdinfo/30:drm-memory-vram:	2048 KiB
+/proc/100/fdinfo/30:drm-engine-gfx:	1000 ns
+/proc/100/fdinfo/31:drm-driver:	amdgpu
+/proc/100/fdinfo/31:drm-client-id:	60
+/proc/100/fdinfo/31:drm-pdev:	0000:c4:00.0
+/proc/100/fdinfo/31:drm-memory-vram:	1 GiB
+/proc/100/fdinfo/31:drm-engine-compute:	500 ns
+/proc/200/fdinfo/5:drm-driver:	i915
+/proc/200/fdinfo/5:drm-client-id:	1
+/proc/200/fdinfo/5:drm-memory-vram:	99 MiB
+/proc/300/fdinfo/7:drm-driver:	amdgpu
+/proc/300/fdinfo/7:drm-client-id:	3
+/proc/300/fdinfo/7:drm-pdev:	0000:c4:00.0
+/proc/300/fdinfo/7:drm-total-vram:	300 MiB
+/proc/100/comm:ollama
+/proc/300/comm:weird: name`
+	procs := parseDRMProcesses(out)
+	if len(procs) != 2 {
+		t.Fatalf("got %d procs, want 2 (non-amdgpu skipped): %+v", len(procs), procs)
+	}
+	p := procs[0]
+	if p.PID != 100 || p.Name != "ollama" || p.VRAMMB != 2+1024 || p.EngineNs != 1500 || p.GPU != "c4:00.0" {
+		t.Errorf("proc 100 = %+v, want 1026 MB (2 MiB + 1 GiB, duplicate fd counted once), 1500 ns", p)
+	}
+	if procs[1].PID != 300 || procs[1].VRAMMB != 300 || procs[1].Name != "weird: name" {
+		t.Errorf("proc 300 = %+v, want total-vram fallback and a colon kept in the name", procs[1])
+	}
+}
+
+func TestAMDClocksThrottleInference(t *testing.T) {
+	card := drmCard{attrs: map[string]string{"freq1_input": "1000000000", "power1_cap": "300000000", "temp2_crit": "110000"}, sclkStates: []int{600, 1500, 2900}}
+	d := base.Device{Utilization: 90, PowerDraw: 298, Temperature: 70}
+	card.applyClocks(&d)
+	if d.ClockMHz != 1000 || d.MaxClockMHz != 2900 {
+		t.Fatalf("clocks = %d/%d, want 1000/2900", d.ClockMHz, d.MaxClockMHz)
+	}
+	if len(d.Throttle) != 1 || d.Throttle[0] != "power cap" {
+		t.Fatalf("throttle = %v, want power cap", d.Throttle)
+	}
+	hot := base.Device{Utilization: 90, PowerDraw: 100, Temperature: 106}
+	card.applyClocks(&hot)
+	if len(hot.Throttle) != 1 || hot.Throttle[0] != "thermal slowdown" {
+		t.Fatalf("throttle = %v, want thermal slowdown", hot.Throttle)
+	}
+	idle := base.Device{Utilization: 5, PowerDraw: 299, Temperature: 106}
+	card.applyClocks(&idle)
+	if len(idle.Throttle) != 0 {
+		t.Fatalf("idle card flagged as throttled: %v", idle.Throttle)
 	}
 }

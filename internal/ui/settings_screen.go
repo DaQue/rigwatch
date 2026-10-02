@@ -39,6 +39,7 @@ type settingsFormState struct {
 	inputs      []textinput.Model // [0]=interval, then warn,crit per metric
 	themeIdx    int
 	headlineIdx int
+	calm        bool
 	focus       int
 	status      string
 	statusErr   bool
@@ -54,8 +55,8 @@ func numericInput(value string) textinput.Model {
 }
 
 // settingsCyclerRows is how many leading focus stops are ←/→ cyclers rather than
-// text inputs: the theme picker and the headline picker.
-const settingsCyclerRows = 2
+// text inputs: the theme picker, the headline picker and the calm-mode switch.
+const settingsCyclerRows = 3
 
 // focusCount is the number of focus stops: the cyclers + interval + 2 per metric.
 func (s *settingsFormState) focusCount() int { return settingsCyclerRows + len(s.inputs) }
@@ -108,7 +109,7 @@ func (m *Model) openSettings() {
 		}
 	}
 
-	m.settingsForm = &settingsFormState{inputs: inputs, themeIdx: themeIdx, headlineIdx: headlineIdx, focus: 0}
+	m.settingsForm = &settingsFormState{inputs: inputs, themeIdx: themeIdx, headlineIdx: headlineIdx, calm: m.settings.CalmMode, focus: 0}
 	m.screen = ScreenSettings
 	m.setSettingsFocus(0)
 }
@@ -160,6 +161,9 @@ func (m Model) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case 1:
 			s.headlineIdx = (s.headlineIdx - 1 + len(HeadlineModes())) % len(HeadlineModes())
 			return m, nil
+		case 2:
+			s.calm = !s.calm
+			return m, nil
 		}
 	case "right":
 		switch s.focus {
@@ -168,6 +172,9 @@ func (m Model) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case 1:
 			s.headlineIdx = (s.headlineIdx + 1) % len(HeadlineModes())
+			return m, nil
+		case 2:
+			s.calm = !s.calm
 			return m, nil
 		}
 	}
@@ -209,6 +216,7 @@ func (m Model) saveSettingsForm() (tea.Model, tea.Cmd) {
 		DefaultTheme:             ThemeNames()[s.themeIdx],
 		Thresholds:               thresholds,
 		HeadlineMode:             HeadlineModes()[s.headlineIdx],
+		CalmMode:                 s.calm,
 		ShowExtendedPanels:       m.settings.ShowExtendedPanels,
 		CheckForUpdates:          m.settings.CheckForUpdates,
 		UpdateCheckIntervalHours: m.settings.UpdateCheckIntervalHours,
@@ -276,8 +284,18 @@ func (m Model) renderSettingsScreen() string {
 	b.WriteString(mutedStyle.Render("  big alert reading per tile"))
 	b.WriteString("\n")
 
-	// Interval row (focus 2 / inputs[0]).
-	b.WriteString(label("Refresh interval", s.focus == 2))
+	// Calm-mode row (focus 2).
+	calmLabel := "off"
+	if s.calm {
+		calmLabel = "on"
+	}
+	b.WriteString(label("Calm mode", s.focus == 2))
+	b.WriteString(accentStyle.Render("‹ " + calmLabel + " ›"))
+	b.WriteString(mutedStyle.Render("  dim healthy hosts (z toggles)"))
+	b.WriteString("\n")
+
+	// Interval row (focus 3 / inputs[0]).
+	b.WriteString(label("Refresh interval", s.focus == settingsCyclerRows))
 	b.WriteString(s.inputs[0].View())
 	b.WriteString(mutedStyle.Render(" sec (blank = default)"))
 	b.WriteString("\n\n")
@@ -286,8 +304,8 @@ func (m Model) renderSettingsScreen() string {
 	b.WriteString("\n")
 	refs := thresholdRefs()
 	for i, ref := range refs {
-		warnFocus := s.focus == 3+i*2
-		critFocus := s.focus == 4+i*2
+		warnFocus := s.focus == settingsCyclerRows+1+i*2
+		critFocus := s.focus == settingsCyclerRows+2+i*2
 		b.WriteString(label(ref.label, warnFocus || critFocus))
 		b.WriteString(s.inputs[1+i*2].View())
 		b.WriteString("  ")

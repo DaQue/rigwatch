@@ -117,6 +117,14 @@ Thresholds are configurable per metric from the settings screen (`o` from the ho
 
 Rigwatch includes per-host themes. The default theme is `rigwatch`, which preserves the original look. In quad view, focus a pane with `Tab` and cycle that host's theme with `[` / `]`. Choices are saved to your user config directory at `rigwatch/themes.json` and follow the SSH host alias across solo, overview, and quad views.
 
+## Insights, timeline and calm mode
+
+- **GPU processes** — the single-host view lists which processes hold VRAM and how busy they keep the GPU (NVIDIA via `nvidia-smi pmon`, AMD via the kernel's DRM `fdinfo`). Over SSH you only see processes your user may inspect.
+- **Throttle detection** — the GPU panel shows the current clock against its maximum, and the INSIGHTS panel calls out thermal or power throttling (NVIDIA reports the real reason; AMD and the CPU are inferred only when clocks are far down under load *and* the card is at its power cap or near its critical temperature).
+- **Forecasts** — RAM growth and filling disks are fitted over the last 30 minutes and reported as "full in ~3h" once there is at least 10 minutes of a clearly linear trend. History is kept in memory for the session.
+- **Event timeline** (`e`) — alerts, recoveries, throttling, forecasts and outages are logged to `~/.config/rigwatch/events.jsonl` (capped) and shown newest first; `f` filters by host.
+- **Calm mode** (`z`, or Settings) — dims every host with no active alert, so a problem is the only thing on screen at full color.
+
 ## SSH Configuration
 
 Make sure your `~/.ssh/config` is properly configured:
@@ -172,14 +180,19 @@ make build
 make run
 ```
 
-### Build for Multiple Platforms
+### Releasing
 
-The project uses [GoReleaser](https://goreleaser.com/) for multi-platform builds and releases.
+Releases go through the same console as the other Tide apps:
 
-**Test the release locally:**
 ```bash
-goreleaser release --snapshot --clean
+./deploy.sh            # interactive: bump, build check, tag, GitHub release, AUR
+./deploy.sh --check    # readiness checklist only
+./deploy.sh --dry-run  # rehearse without committing, tagging or pushing
 ```
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`, which publishes `rigwatch-<os>-<arch>.tar.gz` assets (for the AUR `rigwatch-bin` package), the bare `rigwatch-<os>-<arch>` binaries that `install.sh` downloads, and `checksums.txt`. `deploy.sh` is shared across the Tide repositories; app details live in `deploy.conf`.
+
+### Build for Multiple Platforms
 
 **Build all platforms with Make:**
 ```bash

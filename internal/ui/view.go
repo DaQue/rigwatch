@@ -112,6 +112,9 @@ func (m Model) View() string {
 	case ScreenSettings:
 		return m.renderSettingsScreen()
 
+	case ScreenTimeline:
+		return m.renderTimeline()
+
 	case ScreenPasswordPrompt:
 		return m.renderConnectPasswordPrompt()
 	}

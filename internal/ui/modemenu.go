@@ -117,7 +117,7 @@ func (m Model) renderModeMenu() string {
 		if i > 0 {
 			body.WriteString("\n")
 		}
-		body.WriteString(fmt.Sprintf("%s%s %s", pointer, label, mutedStyle.Render(opt.desc)))
+		fmt.Fprintf(&body, "%s%s %s", pointer, label, mutedStyle.Render(opt.desc))
 	}
 
 	width := clampInt(m.width-4, 40, 60)
