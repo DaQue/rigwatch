@@ -312,22 +312,41 @@ func TestParseDiskStatsSkipsPartitionsAndStackedDevices(t *testing.T) {
 }
 
 func TestParseDFDedupesDevicesAndSkipsLoop(t *testing.T) {
-	output := `/dev/nvme0n1p2  900G  400G  500G  45% /home
-/dev/nvme0n1p2  900G  400G  500G  45% /
-/dev/loop3       56M   56M     0 100% /snap/core/123
-/dev/sdb1       1.8T  1.0T  700G  60% /mnt/my disk`
+	output := `/dev/nvme0n1p2  943718400  419430400  524288000  45% /home
+/dev/nvme0n1p2  943718400  419430400  524288000  45% /
+/dev/loop3         57344      57344          0 100% /snap/core/123
+/dev/sdb1     1932735283 1073741824  751619276  60% /mnt/my disk`
 	got := parseDF(output)
 	if len(got) != 2 {
 		t.Fatalf("got %d disks, want 2: %+v", len(got), got)
 	}
-	if got[0].MountPoint != "/" {
-		t.Fatalf("mount = %q, want shortest mount /", got[0].MountPoint)
+	if got[0].MountPoint != "/" || got[0].Size != "900G" || got[0].Used != "400G" || got[0].UsedBytes != 419430400*1024 {
+		t.Fatalf("disk 0 = %+v, want / 900G/400G with byte counts", got[0])
 	}
 	if got[1].MountPoint != "/mnt/my disk" {
 		t.Fatalf("mount = %q, want mount with space preserved", got[1].MountPoint)
 	}
 }
 
+func TestHumanKiBMatchesDfStyle(t *testing.T) {
+	cases := map[uint64]string{0: "0K", 500: "500K", 1024: "1.0M", 297000: "291M", 2097152: "2.0G", 998244352: "952G", 1572864: "1.5G"}
+	for in, want := range cases {
+		if got := humanKiB(in); got != want {
+			t.Errorf("humanKiB(%d) = %s, want %s", in, got, want)
+		}
+	}
+}
+
+func TestParseCPUFreqAveragesCurrentAndTakesMax(t *testing.T) {
+	out := `/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq:2000000
+/sys/devices/system/cpu/cpu1/cpufreq/scaling_cur_freq:3000000
+/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq:5000000
+/sys/devices/system/cpu/cpu1/cpufreq/cpuinfo_max_freq:5100000`
+	cur, max := parseCPUFreq(out)
+	if cur != 2500 || max != 5100 {
+		t.Fatalf("cur=%d max=%d, want 2500/5100", cur, max)
+	}
+}
 func TestParseThermalZonesNumbersRepeatedNames(t *testing.T) {
 	output := `/sys/class/thermal/thermal_zone0/type:acpitz
 /sys/class/thermal/thermal_zone0/temp:56000

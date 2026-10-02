@@ -150,6 +150,7 @@ func (p AMDProvider) queryLegacy(runCmd base.RunCmdFunc) ([]base.Device, error) 
 	if len(devices) == 0 {
 		return nil, fmt.Errorf("no GPUs in rocm-smi output")
 	}
+	enrichAMDClocks(runCmd, devices)
 	return devices, nil
 }
 
@@ -273,6 +274,9 @@ const DRMProbeCommand = "sh -c 'grep -H . " +
 	"/sys/class/drm/card*/device/hwmon/hwmon*/temp2_input " +
 	"/sys/class/drm/card*/device/hwmon/hwmon*/power1_average " +
 	"/sys/class/drm/card*/device/hwmon/hwmon*/power1_cap " +
+	"/sys/class/drm/card*/device/hwmon/hwmon*/freq1_input " +
+	"/sys/class/drm/card*/device/hwmon/hwmon*/temp2_crit " +
+	"/sys/class/drm/card*/device/pp_dpm_sclk " +
 	"2>/dev/null || true'"
 
 // drmCardPattern pulls the card number out of a /sys/class/drm path so readings
@@ -285,6 +289,10 @@ type drmCard struct {
 	index int
 	slot  string
 	attrs map[string]string
+	// sclkStates are the card's graphics-clock DPM states in MHz, lowest first;
+	// sclkActive is the one the card is running now (0 if none is marked).
+	sclkStates []int
+	sclkActive int
 }
 
 func (p AMDProvider) querySysfs(runCmd base.RunCmdFunc) ([]base.Device, error) {
@@ -324,6 +332,7 @@ func (p AMDProvider) querySysfs(runCmd base.RunCmdFunc) ([]base.Device, error) {
 		}
 		// No cap in sysfs leaves PowerLimit at 0, which the UI treats as unknown
 		// and hides the power bar rather than draw it against an invented limit.
+		card.applyClocks(&device)
 		devices = append(devices, device)
 	}
 	return devices, nil
@@ -332,6 +341,12 @@ func (p AMDProvider) querySysfs(runCmd base.RunCmdFunc) ([]base.Device, error) {
 // discreteAMDCards returns the AMD cards sysfs reports, lowest card number
 // first, excluding integrated graphics.
 func discreteAMDCards(runCmd base.RunCmdFunc) []drmCard {
+	return amdCards(runCmd, true)
+}
+
+// amdCards returns the AMD cards sysfs reports. With discreteOnly, integrated
+// graphics (identified by their small VRAM carve-out) are excluded.
+func amdCards(runCmd base.RunCmdFunc, discreteOnly bool) []drmCard {
 	out, err := runCmd(DRMProbeCommand)
 	if err != nil {
 		return nil
@@ -359,6 +374,16 @@ func discreteAMDCards(runCmd base.RunCmdFunc) []drmCard {
 
 		attr := path[strings.LastIndex(path, "/")+1:]
 		value = strings.TrimSpace(value)
+		if attr == "pp_dpm_sclk" {
+			// One line per state: "1: 821Mhz *", the star marking the active one.
+			if mhz := parseDPMState(value); mhz > 0 {
+				card.sclkStates = append(card.sclkStates, mhz)
+				if strings.HasSuffix(value, "*") {
+					card.sclkActive = mhz
+				}
+			}
+			continue
+		}
 		if attr == "uevent" {
 			// uevent is many lines; the PCI address is the one worth keeping, and
 			// it is what joins this card to its lspci description.
@@ -383,7 +408,7 @@ func discreteAMDCards(runCmd base.RunCmdFunc) []drmCard {
 		if card.attrs["vendor"] != amdPCIVendor {
 			continue
 		}
-		if card.intAttr("mem_info_vram_total")/1048576 < discreteVRAMFloorMB {
+		if discreteOnly && card.intAttr("mem_info_vram_total")/1048576 < discreteVRAMFloorMB {
 			continue
 		}
 		cards = append(cards, *card)
@@ -424,4 +449,238 @@ func (c drmCard) intAttr(name string) int {
 		return 0
 	}
 	return value
+}
+
+// parseDPMState reads the MHz out of a pp_dpm_sclk line such as "2: 2900Mhz *".
+func parseDPMState(line string) int {
+	_, rest, ok := strings.Cut(line, ":")
+	if !ok {
+		return 0
+	}
+	rest = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(rest), "*"))
+	rest = strings.TrimSuffix(strings.ToLower(rest), "mhz")
+	mhz, err := strconv.Atoi(strings.TrimSpace(rest))
+	if err != nil {
+		return 0
+	}
+	return mhz
+}
+
+// applyClocks fills in the device's clock and throttle state from sysfs. amdgpu
+// does not say why it slowed down, so the reason is inferred, and only when the
+// evidence is concrete: a card well below its top clock under real load that is
+// either pinned at its power cap or within a few degrees of its critical
+// temperature. Anything vaguer is left unflagged rather than guessed at.
+func (c drmCard) applyClocks(d *base.Device) {
+	if len(c.sclkStates) > 0 {
+		d.MaxClockMHz = c.sclkStates[len(c.sclkStates)-1]
+		for _, mhz := range c.sclkStates {
+			if mhz > d.MaxClockMHz {
+				d.MaxClockMHz = mhz
+			}
+		}
+	}
+	d.ClockMHz = c.intAttr("freq1_input") / 1000000 // Hz → MHz
+	if d.ClockMHz == 0 {
+		d.ClockMHz = c.sclkActive
+	}
+	if d.MaxClockMHz == 0 || d.ClockMHz == 0 || d.Utilization < 50 || d.ClockMHz*100 > d.MaxClockMHz*65 {
+		return
+	}
+	capW := c.intAttr("power1_cap") / 1000000
+	if capW > 0 && d.PowerDraw*100 >= capW*95 {
+		d.Throttle = append(d.Throttle, "power cap")
+	}
+	if crit := c.intAttr("temp2_crit") / 1000; crit > 0 && d.Temperature >= crit-5 {
+		d.Throttle = append(d.Throttle, "thermal slowdown")
+	}
+}
+
+// enrichAMDClocks adds clock and throttle data from sysfs to devices that came
+// from rocm-smi, which reports neither. rocm-smi numbers its devices from zero
+// in its own order, which does not match sysfs card numbers (an APU often holds
+// card0 there and the Radeon card1 here), so devices are paired by position, and
+// only when both sides list the same number of cards.
+func enrichAMDClocks(runCmd base.RunCmdFunc, devices []base.Device) {
+	cards := amdCards(runCmd, false)
+	if len(cards) != len(devices) {
+		return
+	}
+	for i := range devices {
+		cards[i].applyClocks(&devices[i])
+	}
+}
+
+// DRMProcessCommand dumps the DRM client accounting the kernel keeps in fdinfo,
+// plus every process name, in one round trip (about 100 ms on a busy desktop).
+// Run under sh so a login shell cannot trip on an unmatched glob. Only
+// processes the SSH user may inspect appear, which in practice is their own.
+const DRMProcessCommand = "sh -c '" +
+	"grep -H -s -E \"^(drm-driver|drm-client-id|drm-pdev|drm-memory-vram|drm-total-vram|drm-engine-gfx|drm-engine-compute):\" /proc/[0-9]*/fdinfo/* 2>/dev/null; " +
+	"grep -H -s . /proc/[0-9]*/comm 2>/dev/null; true'"
+
+// Processes lists processes holding AMD GPU memory or running on its engines.
+func (p AMDProvider) Processes(runCmd base.RunCmdFunc) []base.Process {
+	out, err := runCmd(DRMProcessCommand)
+	if err != nil {
+		return nil
+	}
+	return parseDRMProcesses(out)
+}
+
+type drmClient struct {
+	pid      int
+	pdev     string
+	driver   string
+	vramKiB  uint64
+	totalKiB uint64
+	engineNs uint64
+}
+
+// parseDRMProcesses folds fdinfo lines into per-process totals. A process often
+// has many file descriptors onto the same DRM client, each repeating identical
+// counters, so clients are keyed by (pid, client-id) and counted once.
+func parseDRMProcesses(out string) []base.Process {
+	type key struct {
+		pid    int
+		client string
+	}
+	clients := map[key]*drmClient{}
+	names := map[int]string{}
+	var order []key
+
+	// fdinfo is grouped by file, so the client id arrives mid-group; remember each
+	// fd's lines and resolve them once the id is known.
+	type fdState struct {
+		pid   int
+		id    string
+		attrs map[string]string
+	}
+	fds := map[string]*fdState{}
+	var fdOrder []string
+
+	for _, line := range strings.Split(out, "\n") {
+		path, rest, ok := strings.Cut(line, ":")
+		if !ok || !strings.HasPrefix(path, "/proc/") {
+			continue
+		}
+		parts := strings.Split(path, "/") // "", "proc", PID, "fdinfo", FD | "", "proc", PID, "comm"
+		if len(parts) < 4 {
+			continue
+		}
+		pid, err := strconv.Atoi(parts[2])
+		if err != nil {
+			continue
+		}
+		if parts[3] == "comm" {
+			names[pid] = strings.TrimSpace(rest)
+			continue
+		}
+		if parts[3] != "fdinfo" {
+			continue
+		}
+		k, v, ok := strings.Cut(rest, ":")
+		if !ok {
+			continue
+		}
+		fd := fds[path]
+		if fd == nil {
+			fd = &fdState{pid: pid, attrs: map[string]string{}}
+			fds[path] = fd
+			fdOrder = append(fdOrder, path)
+		}
+		fd.attrs[strings.TrimSpace(k)] = strings.TrimSpace(v)
+	}
+
+	for _, path := range fdOrder {
+		fd := fds[path]
+		if fd.attrs["drm-driver"] != "amdgpu" {
+			continue
+		}
+		k := key{fd.pid, fd.attrs["drm-client-id"]}
+		if clients[k] != nil {
+			continue
+		}
+		c := &drmClient{pid: fd.pid, pdev: fd.attrs["drm-pdev"]}
+		c.vramKiB = parseDRMSizeKiB(fd.attrs["drm-memory-vram"])
+		c.totalKiB = parseDRMSizeKiB(fd.attrs["drm-total-vram"])
+		for _, engine := range []string{"drm-engine-gfx", "drm-engine-compute"} {
+			ns, _ := strconv.ParseUint(strings.TrimSuffix(fd.attrs[engine], " ns"), 10, 64)
+			c.engineNs += ns
+		}
+		clients[k] = c
+		order = append(order, k)
+	}
+
+	// Sum a process's clients per card.
+	type pk struct {
+		pid  int
+		pdev string
+	}
+	merged := map[pk]*base.Process{}
+	var mergedOrder []pk
+	for _, k := range order {
+		c := clients[k]
+		mem := c.vramKiB
+		if mem == 0 {
+			mem = c.totalKiB // older kernels only report the allocated figure
+		}
+		id := pk{c.pid, c.pdev}
+		proc := merged[id]
+		if proc == nil {
+			name := names[c.pid]
+			if name == "" {
+				name = "pid " + strconv.Itoa(c.pid)
+			}
+			proc = &base.Process{GPU: shortPCI(c.pdev), PID: c.pid, Name: name, UtilPct: -1}
+			merged[id] = proc
+			mergedOrder = append(mergedOrder, id)
+		}
+		proc.VRAMMB += int(mem / 1024)
+		proc.EngineNs += c.engineNs
+	}
+
+	procs := make([]base.Process, 0, len(mergedOrder))
+	for _, id := range mergedOrder {
+		// A client that holds no memory and has never run work is just an open
+		// device node (compositors and browsers keep dozens); listing them buries
+		// the processes that matter.
+		if p := merged[id]; p.VRAMMB > 0 || p.EngineNs > 0 {
+			procs = append(procs, *p)
+		}
+	}
+	return procs
+}
+
+// parseDRMSizeKiB reads fdinfo sizes like "12 KiB" or "2 MiB"; a bare number is
+// bytes.
+func parseDRMSizeKiB(v string) uint64 {
+	fields := strings.Fields(v)
+	if len(fields) == 0 {
+		return 0
+	}
+	n, err := strconv.ParseUint(fields[0], 10, 64)
+	if err != nil {
+		return 0
+	}
+	if len(fields) == 1 {
+		return n / 1024
+	}
+	switch fields[1] {
+	case "KiB":
+		return n
+	case "MiB":
+		return n * 1024
+	case "GiB":
+		return n * 1024 * 1024
+	}
+	return n / 1024
+}
+
+// shortPCI trims the PCI domain ("0000:c4:00.0" → "c4:00.0").
+func shortPCI(pdev string) string {
+	if strings.Count(pdev, ":") == 2 {
+		return pdev[strings.Index(pdev, ":")+1:]
+	}
+	return pdev
 }

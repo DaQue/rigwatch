@@ -168,6 +168,16 @@ func (p *ThemePreferences) SetHostTheme(hostName, themeName string) {
 }
 
 func (m Model) themeForHost(hostName string) Theme {
+	theme := m.baseThemeForHost(hostName)
+	// Calm mode dims a host only while it is healthy; the moment an alert fires
+	// it snaps back to full color, which is the whole point.
+	if m.settings.CalmMode && m.worstHostSeverity(hostName) == SevOK {
+		return calmTheme(theme)
+	}
+	return theme
+}
+
+func (m Model) baseThemeForHost(hostName string) Theme {
 	// A host with no explicit per-host theme uses the configured default theme.
 	if _, ok := m.themePrefs.Hosts[hostName]; !ok && m.settings.DefaultTheme != "" {
 		return ThemeByName(m.settings.DefaultTheme)
@@ -178,7 +188,15 @@ func (m Model) themeForHost(hostName string) Theme {
 // worstHostSeverity is the highest active alert severity for a host given the
 // current settings, or SevOK when there is no telemetry yet.
 func (m Model) worstHostSeverity(hostName string) Severity {
-	return worstSeverity(m.sysInfos[hostName], m.settings.Thresholds)
+	worst := worstSeverity(m.sysInfos[hostName], m.settings.Thresholds)
+	// A throttled GPU or a disk filling in hours is as much a problem as a
+	// threshold crossing, so it recolors the tile and keeps calm mode off.
+	for _, in := range m.metricHistories[hostName].Insights {
+		if in.Sev > worst {
+			worst = in.Sev
+		}
+	}
+	return worst
 }
 
 func (m Model) renderHostThemed(hostName string, render func() string) string {

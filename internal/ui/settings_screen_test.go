@@ -129,7 +129,7 @@ func TestSettingsFormCyclesHeadlineMode(t *testing.T) {
 	}
 }
 
-// The threshold inputs sit after both cycler rows; a stale offset would write
+// The threshold inputs sit after the cycler rows; a stale offset would write
 // the interval into a threshold.
 func TestSettingsFormThresholdFocusOffsets(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -138,11 +138,11 @@ func TestSettingsFormThresholdFocusOffsets(t *testing.T) {
 	m.settings = DefaultSettings()
 	(&m).openSettings()
 
-	if got := inputIndexFor(2); got != 0 {
-		t.Fatalf("focus 2 maps to input %d, want 0 (interval)", got)
+	if got := inputIndexFor(settingsCyclerRows); got != 0 {
+		t.Fatalf("first input focus maps to input %d, want 0 (interval)", got)
 	}
-	if got := inputIndexFor(3); got != 1 {
-		t.Fatalf("focus 3 maps to input %d, want 1 (CPU warn)", got)
+	if got := inputIndexFor(settingsCyclerRows + 1); got != 1 {
+		t.Fatalf("next focus maps to input %d, want 1 (CPU warn)", got)
 	}
 	if got := m.settingsForm.focusCount(); got != settingsCyclerRows+len(m.settingsForm.inputs) {
 		t.Fatalf("focusCount = %d, want %d", got, settingsCyclerRows+len(m.settingsForm.inputs))

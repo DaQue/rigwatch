@@ -2,6 +2,7 @@ package internal
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"sort"
 	"strconv"
@@ -21,10 +22,11 @@ type SystemInfo struct {
 	Processes []ProcessInfo
 
 	// Extended sensors (rendered only in single-host view).
-	Swap   SwapInfo
-	Load   LoadInfo
-	DiskIO []DiskIOInfo
-	Fans   []FanInfo
+	Swap     SwapInfo
+	GPUProcs []GPUProcessInfo
+	Load     LoadInfo
+	DiskIO   []DiskIOInfo
+	Fans     []FanInfo
 
 	// Uptime is how long the host has been running (0 if unavailable).
 	Uptime time.Duration
@@ -36,6 +38,10 @@ type CPUInfo struct {
 	Usage        string
 	UsagePercent float64
 	Cores        []CPUCoreInfo
+	// FreqMHz is the mean current clock across cores and MaxFreqMHz the highest
+	// rated clock; 0 when cpufreq is not exposed.
+	FreqMHz    int
+	MaxFreqMHz int
 }
 
 type CPUCoreInfo struct {
@@ -52,6 +58,19 @@ type GPUInfo struct {
 	PowerDraw   int // in Watts
 	PowerLimit  int // in Watts
 	Temperature int // in Celsius
+	ClockMHz    int
+	MaxClockMHz int
+	Throttle    []string
+}
+
+// GPUProcessInfo is one process using a GPU.
+type GPUProcessInfo struct {
+	GPU      string
+	PID      int
+	Name     string
+	VRAMMB   int
+	EngineNs uint64  // cumulative busy time, when the driver reports it
+	UtilPct  float64 // derived by the UI layer (or reported directly); -1 = unknown
 }
 
 type RAMInfo struct {
@@ -67,6 +86,11 @@ type DiskInfo struct {
 	Available    string
 	UsagePercent string
 	MountPoint   string
+
+	// Exact byte counts, for trend forecasting; the string fields above are
+	// rounded for display.
+	TotalBytes uint64
+	UsedBytes  uint64
 }
 
 type TemperatureInfo struct {
@@ -125,10 +149,14 @@ func GatherSystemInfo(client *SSHClient) (*SystemInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get CPU info: %w", err)
 	}
+	cpuInfo.FreqMHz, cpuInfo.MaxFreqMHz = getCPUFreq(client)
 	info.CPU = cpuInfo
 
 	gpuInfo, _ := getGPUInfo(client)
 	info.GPUs = gpuInfo
+	if len(gpuInfo) > 0 {
+		info.GPUProcs = getGPUProcesses(client)
+	}
 
 	ramInfo, err := getRAMInfo(client)
 	if err != nil {
@@ -375,10 +403,63 @@ func getGPUInfo(client *SSHClient) ([]GPUInfo, error) {
 			PowerDraw:   dev.PowerDraw,
 			PowerLimit:  dev.PowerLimit,
 			Temperature: dev.Temperature,
+			ClockMHz:    dev.ClockMHz,
+			MaxClockMHz: dev.MaxClockMHz,
+			Throttle:    dev.Throttle,
 		}
 	}
 
 	return gpus, nil
+}
+
+func getGPUProcesses(client *SSHClient) []GPUProcessInfo {
+	procs := gpu.QueryProcesses(func(cmd string) (string, error) { return client.ExecuteCommand(cmd) })
+	out := make([]GPUProcessInfo, len(procs))
+	for i, p := range procs {
+		out[i] = GPUProcessInfo{GPU: p.GPU, PID: p.PID, Name: p.Name, VRAMMB: p.VRAMMB, EngineNs: p.EngineNs, UtilPct: float64(p.UtilPct)}
+	}
+	return out
+}
+
+// cpuFreqCommand reads every core's current clock and rated maximum in one call.
+// It runs under sh so a login shell can't abort on the cpu* glob.
+const cpuFreqCommand = "sh -c 'grep -H . /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_cur_freq /sys/devices/system/cpu/cpu[0-9]*/cpufreq/cpuinfo_max_freq 2>/dev/null; true'"
+
+func getCPUFreq(client *SSHClient) (cur, max int) {
+	output, err := client.ExecuteCommand(cpuFreqCommand)
+	if err != nil {
+		return 0, 0
+	}
+	return parseCPUFreq(output)
+}
+
+// parseCPUFreq averages scaling_cur_freq over the cores and takes the highest
+// cpuinfo_max_freq. The kernel reports kHz.
+func parseCPUFreq(output string) (curMHz, maxMHz int) {
+	var sum, n, maxKHz int
+	for _, line := range strings.Split(output, "\n") {
+		path, value, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		khz, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil || khz <= 0 {
+			continue
+		}
+		switch {
+		case strings.HasSuffix(path, "scaling_cur_freq"):
+			sum += khz
+			n++
+		case strings.HasSuffix(path, "cpuinfo_max_freq"):
+			if khz > maxKHz {
+				maxKHz = khz
+			}
+		}
+	}
+	if n > 0 {
+		curMHz = sum / n / 1000
+	}
+	return curMHz, maxKHz / 1000
 }
 
 func getRAMInfo(client *SSHClient) (RAMInfo, error) {
@@ -407,7 +488,7 @@ func getRAMInfo(client *SSHClient) (RAMInfo, error) {
 }
 
 func getDiskInfo(client *SSHClient) ([]DiskInfo, error) {
-	output, err := client.ExecuteCommand("df -hP | grep -E '^/dev/'")
+	output, err := client.ExecuteCommand("df -kP | grep -E '^/dev/'")
 	if err != nil {
 		return nil, err
 	}
@@ -415,7 +496,7 @@ func getDiskInfo(client *SSHClient) ([]DiskInfo, error) {
 	return parseDF(output), nil
 }
 
-// parseDF parses `df -hP` rows for real block devices. The same device often
+// parseDF parses `df -kP` rows for real block devices. The same device often
 // appears several times (btrfs subvolumes, bind mounts) with identical usage, so
 // each device is reported once under its shortest mount point. Loop devices —
 // snap/appimage squashfs mounts that are always 100% full — are noise.
@@ -427,13 +508,21 @@ func parseDF(output string) []DiskInfo {
 		if len(parts) < 6 || strings.HasPrefix(parts[0], "/dev/loop") {
 			continue
 		}
+		totalKiB, err1 := strconv.ParseUint(parts[1], 10, 64)
+		usedKiB, err2 := strconv.ParseUint(parts[2], 10, 64)
+		availKiB, err3 := strconv.ParseUint(parts[3], 10, 64)
+		if err1 != nil || err2 != nil || err3 != nil {
+			continue
+		}
 		disk := DiskInfo{
 			Device:       parts[0],
-			Size:         parts[1],
-			Used:         parts[2],
-			Available:    parts[3],
+			Size:         humanKiB(totalKiB),
+			Used:         humanKiB(usedKiB),
+			Available:    humanKiB(availKiB),
 			UsagePercent: parts[4],
 			MountPoint:   strings.Join(parts[5:], " "), // mount points may contain spaces
+			TotalBytes:   totalKiB * 1024,
+			UsedBytes:    usedKiB * 1024,
 		}
 		if i, seen := byDevice[disk.Device]; seen {
 			if len(disk.MountPoint) < len(disks[i].MountPoint) {
@@ -445,6 +534,22 @@ func parseDF(output string) []DiskInfo {
 		disks = append(disks, disk)
 	}
 	return disks
+}
+
+// humanKiB formats a size like `df -h`: binary units, one decimal below 10 and
+// whole numbers above, rounding up as coreutils does.
+func humanKiB(kib uint64) string {
+	units := []string{"K", "M", "G", "T", "P"}
+	v := float64(kib)
+	i := 0
+	for v >= 1024 && i < len(units)-1 {
+		v /= 1024
+		i++
+	}
+	if v < 10 && i > 0 {
+		return fmt.Sprintf("%.1f%s", math.Ceil(v*10)/10, units[i])
+	}
+	return fmt.Sprintf("%.0f%s", math.Ceil(v), units[i])
 }
 
 func getTemperatureInfo(client *SSHClient) ([]TemperatureInfo, error) {

@@ -34,3 +34,17 @@ func QueryAll(runCmd base.RunCmdFunc) ([]base.Device, error) {
 func Register(p base.Provider) {
 	providers = append(providers, p)
 }
+
+// QueryProcesses collects per-process GPU usage from every detected provider
+// that supports it. Failures are skipped, as in QueryAll.
+func QueryProcesses(runCmd base.RunCmdFunc) []base.Process {
+	var all []base.Process
+	for _, p := range providers {
+		lister, ok := p.(base.ProcessLister)
+		if !ok || !p.Detect(runCmd) {
+			continue
+		}
+		all = append(all, lister.Processes(runCmd)...)
+	}
+	return all
+}

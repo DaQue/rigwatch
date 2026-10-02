@@ -494,6 +494,8 @@ func isAllowedCommand(cmd string) bool {
 		"find -L /sys/class/hwmon -maxdepth 2 \\( -name 'fan*_input' -o -name 'fan*_label' \\) -exec grep -H . {} + 2>/dev/null || true",
 		"ps -eo pid=,comm=,pcpu=,pmem= --sort=-pcpu | head -n 25",
 		gpu.DRMProbeCommand,
+		gpu.DRMProcessCommand,
+		cpuFreqCommand,
 	}
 	for _, allowed := range allowedExact {
 		if cmd == allowed {

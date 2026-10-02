@@ -11,6 +11,31 @@ type Device struct {
 	PowerLimit  int // watts
 	Temperature int // celsius
 	Vendor      string
+
+	// ClockMHz is the current shader/graphics clock and MaxClockMHz the highest
+	// clock the card will boost to; both 0 when the host does not expose them.
+	ClockMHz    int
+	MaxClockMHz int
+	// Throttle lists why the card is currently running below its clocks, in
+	// plain words ("thermal slowdown", "power cap"). Empty when unthrottled or
+	// unknown.
+	Throttle []string
+}
+
+// Process is one process using a GPU.
+type Process struct {
+	GPU      string // PCI address or index, to tell cards apart on multi-GPU hosts
+	PID      int
+	Name     string
+	VRAMMB   int
+	EngineNs uint64 // cumulative GPU busy time, for deriving utilization; 0 if unknown
+	UtilPct  int    // instantaneous utilization; -1 when not reported directly
+}
+
+// ProcessLister is implemented by providers that can say which processes are
+// using the GPU.
+type ProcessLister interface {
+	Processes(runCmd RunCmdFunc) []Process
 }
 
 type RunCmdFunc func(string) (string, error)

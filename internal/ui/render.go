@@ -72,7 +72,7 @@ func (m Model) renderSingleHostTile(host internal.SSHHost, indicator string) str
 	if info := m.sysInfos[host.Name]; info != nil && info.Uptime > 0 {
 		uptimeHint = "  •  up " + formatUptime(info.Uptime)
 	}
-	subtitle := fmt.Sprintf("v%s  •  refreshed %s%s  •  interval %s%s  •  s shell  •  c add hosts  •  v modes  •  ? help  •  q quit",
+	subtitle := fmt.Sprintf("v%s  •  refreshed %s%s  •  interval %s%s  •  s shell  •  c add hosts  •  v modes  •  e timeline  •  z calm  •  ? help  •  q quit",
 		internal.ShortVersion(), lastUpdate.Format("15:04:05"), uptimeHint, formatInterval(m.updateInterval), navHint)
 
 	header := renderHeroHeader("RIGWATCH // "+host.Name+indicator, subtitle, m.width, m.animationFrame)
@@ -93,7 +93,7 @@ func (m Model) renderSingleHostTile(host internal.SSHHost, indicator string) str
 func (m Model) renderOverview() string {
 	var b strings.Builder
 
-	subtitle := fmt.Sprintf("v%s  •  refreshed %s  •  interval %s  •  t per-host  •  g grid  •  c add hosts  •  v modes  •  ? help  •  q quit",
+	subtitle := fmt.Sprintf("v%s  •  refreshed %s  •  interval %s  •  t per-host  •  g grid  •  c add hosts  •  v modes  •  e timeline  •  z calm  •  ? help  •  q quit",
 		internal.ShortVersion(), time.Now().Format("15:04:05"), formatInterval(m.updateInterval))
 	b.WriteString(renderHeroHeader(fmt.Sprintf("COMMAND CENTER // %d HOSTS", len(m.selectedHosts)), subtitle, m.width, m.animationFrame))
 	b.WriteString("\n\n")
@@ -187,7 +187,7 @@ func renderDashboardWithHistory(hostName string, info *internal.SystemInfo, hist
 	if multiHost {
 		navHint = "  •  n next  •  t overview  •  g grid"
 	}
-	subtitle := fmt.Sprintf("v%s  •  refreshed %s  •  interval %s%s  •  s shell  •  c add hosts  •  v modes  •  ? help  •  q quit",
+	subtitle := fmt.Sprintf("v%s  •  refreshed %s  •  interval %s%s  •  s shell  •  c add hosts  •  v modes  •  e timeline  •  z calm  •  ? help  •  q quit",
 		internal.ShortVersion(), lastUpdate.Format("15:04:05"), formatInterval(updateInterval), navHint)
 
 	header := renderHeroHeader("RIGWATCH // "+hostName, subtitle, width, frame)
@@ -242,7 +242,10 @@ func renderMetricsGrid(info *internal.SystemInfo, history metricHistory, width i
 		}
 		right := []string{renderNetworkSection(network, history.Network, cardWidth)}
 		if extended {
-			left = append([]string{renderAlertsSection(info, cardWidth)}, left...)
+			if len(gpus) > 0 {
+				middle = append([]string{middle[0], renderGPUProcessSection(info.GPUProcs, cardWidth)}, middle[1:]...)
+			}
+			left = append([]string{renderAlertsSection(info, cardWidth), renderInsightsSection(history.Insights, cardWidth)}, left...)
 			left = append(left, renderDiskIOSection(info.DiskIO, cardWidth))
 			middle = append(middle, renderSwapSection(info.Swap, cardWidth))
 			right = append(right, renderLoadSection(info.Load, cardWidth), renderFanSection(info.Fans, history.Fans, cardWidth))
@@ -269,7 +272,10 @@ func renderMetricsGrid(info *internal.SystemInfo, history metricHistory, width i
 			renderTemperatureSection(temps, gpus, history.Temp, cardWidth),
 		}
 		if extended {
-			left = append([]string{renderAlertsSection(info, leftWidth)}, left...)
+			if len(gpus) > 0 {
+				rightPrefixPanels = append([]string{rightPrefixPanels[0], renderGPUProcessSection(info.GPUProcs, cardWidth)}, rightPrefixPanels[1:]...)
+			}
+			left = append([]string{renderAlertsSection(info, leftWidth), renderInsightsSection(history.Insights, leftWidth)}, left...)
 			left = append(left, renderDiskIOSection(info.DiskIO, leftWidth))
 			rightPrefixPanels = append(rightPrefixPanels, renderSwapSection(info.Swap, cardWidth), renderLoadSection(info.Load, cardWidth), renderFanSection(info.Fans, history.Fans, cardWidth))
 		}
@@ -293,7 +299,10 @@ func renderMetricsGrid(info *internal.SystemInfo, history metricHistory, width i
 		renderNetworkSection(network, history.Network, cardWidth),
 	}
 	if extended {
-		stack = append([]string{renderAlertsSection(info, cardWidth)}, stack...)
+		if len(gpus) > 0 {
+			stack = append(stack[:2], append([]string{renderGPUProcessSection(info.GPUProcs, cardWidth)}, stack[2:]...)...)
+		}
+		stack = append([]string{renderAlertsSection(info, cardWidth), renderInsightsSection(history.Insights, cardWidth)}, stack...)
 		stack = append(stack,
 			renderSwapSection(info.Swap, cardWidth),
 			renderLoadSection(info.Load, cardWidth),
@@ -421,6 +430,12 @@ func renderGPUSummarySectionWithHistory(gpus []internal.GPUInfo, gpuHistory []fl
 		b.WriteString(accentStyle.Render("PWR  "))
 		b.WriteString(renderNeonProgressBar(powerPct, barWidth))
 		b.WriteString(mutedStyle.Render(fmt.Sprintf(" %d/%dW", totalPower, totalPowerLimit)))
+	}
+	if extended {
+		if line := renderGPUClockLine(gpus, max(barWidth-22, 8)); line != "" {
+			b.WriteString("\n")
+			b.WriteString(line)
+		}
 	}
 	if len(gpuHistory) > 1 {
 		b.WriteString("\n")
@@ -751,4 +766,82 @@ func formatBytesPerSecond(bytes uint64) string {
 		return fmt.Sprintf("%.0f %s", value, units[unit])
 	}
 	return fmt.Sprintf("%.1f %s", value, units[unit])
+}
+
+// renderGPUClockLine shows how close the GPU is to its top clock. With several
+// GPUs it reports the one furthest below its maximum, since that is the one
+// worth noticing. A throttle reason, when known, is appended in warning color.
+func renderGPUClockLine(gpus []internal.GPUInfo, barWidth int) string {
+	worst := -1
+	worstPct := 101
+	for i, g := range gpus {
+		if g.MaxClockMHz <= 0 || g.ClockMHz <= 0 {
+			continue
+		}
+		if pct := g.ClockMHz * 100 / g.MaxClockMHz; pct < worstPct {
+			worst, worstPct = i, pct
+		}
+	}
+	if worst < 0 {
+		return ""
+	}
+	g := gpus[worst]
+	line := accentStyle.Render("CLK  ") + renderNeonProgressBar(float64(worstPct), barWidth) +
+		mutedStyle.Render(fmt.Sprintf(" %d/%d MHz", g.ClockMHz, g.MaxClockMHz))
+	if len(g.Throttle) > 0 {
+		line += " " + warningStyle.Render("▼ "+strings.Join(g.Throttle, ", "))
+	}
+	return line
+}
+
+// renderGPUProcessSection lists the processes using the GPU, busiest first.
+func renderGPUProcessSection(procs []internal.GPUProcessInfo, width int) string {
+	if len(procs) == 0 {
+		return renderPanel("GPU PROCESSES", mutedStyle.Render("no GPU clients visible"), width)
+	}
+	multi := false
+	for _, p := range procs {
+		if p.GPU != procs[0].GPU {
+			multi = true
+			break
+		}
+	}
+	nameWidth := clampInt(width-34, 8, 24)
+	header := fmt.Sprintf("%-7s %-*s %8s %5s", "PID", nameWidth, "PROCESS", "VRAM", "UTIL")
+	if multi {
+		header += "  GPU"
+	}
+	var b strings.Builder
+	b.WriteString(mutedStyle.Render(header))
+	limit := min(len(procs), 5)
+	for i := 0; i < limit; i++ {
+		p := procs[i]
+		util := "  –"
+		if p.UtilPct >= 0 {
+			util = fmt.Sprintf("%3.0f%%", p.UtilPct)
+		}
+		vram := "       –"
+		if p.VRAMMB > 0 {
+			vram = fmt.Sprintf("%8s", formatMB(p.VRAMMB))
+		}
+		row := fmt.Sprintf("%-7d %-*s %s %5s", p.PID, nameWidth, truncateVisible(p.Name, nameWidth), vram, util)
+		if multi {
+			row += "  " + p.GPU
+		}
+		b.WriteString("\n")
+		b.WriteString(panelTextStyle.Render(row))
+	}
+	if len(procs) > limit {
+		b.WriteString("\n")
+		b.WriteString(mutedStyle.Render(fmt.Sprintf("+%d more", len(procs)-limit)))
+	}
+	return renderPanel("GPU PROCESSES", b.String(), width)
+}
+
+// formatMB formats a megabyte count as MB below 1 GB and GB above.
+func formatMB(mb int) string {
+	if mb >= 1024 {
+		return fmt.Sprintf("%.1f GB", float64(mb)/1024)
+	}
+	return fmt.Sprintf("%d MB", mb)
 }
