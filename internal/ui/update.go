@@ -23,7 +23,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "ctrl+c" {
 			for _, client := range m.clients {
 				if client != nil {
-					client.Close()
+					_ = client.Close()
 				}
 			}
 			return m, tea.Quit
@@ -115,7 +115,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q":
 			for _, client := range m.clients {
 				if client != nil {
-					client.Close()
+					_ = client.Close()
 				}
 			}
 			return m, tea.Quit
@@ -255,7 +255,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.sshOnExit = currentHost.Name
 					for _, client := range m.clients {
 						if client != nil {
-							client.Close()
+							_ = client.Close()
 						}
 					}
 					return m, tea.Quit

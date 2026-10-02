@@ -137,15 +137,15 @@ func (m Model) renderSingleHostOverviewThemed(host internal.SSHHost, width int) 
 	if cpuUsage == "" {
 		cpuUsage = "N/A"
 	}
-	b.WriteString(fmt.Sprintf("CPU   %s\n", accentStyle.Render(cpuUsage)))
+	fmt.Fprintf(&b, "CPU   %s\n", accentStyle.Render(cpuUsage))
 	b.WriteString(renderNeonProgressBarSev(sysInfo.CPU.UsagePercent, metricBarWidth(width-8), activeThresholds.CPUPct))
 	b.WriteString("\n")
 
 	if sysInfo.RAM.Total > 0 {
-		b.WriteString(fmt.Sprintf("RAM   %.1f / %.1f GB  %.0f%%\n",
+		fmt.Fprintf(&b, "RAM   %.1f / %.1f GB  %.0f%%\n",
 			float64(sysInfo.RAM.Used)/1024,
 			float64(sysInfo.RAM.Total)/1024,
-			sysInfo.RAM.UsagePercent))
+			sysInfo.RAM.UsagePercent)
 		b.WriteString(renderNeonProgressBarSev(sysInfo.RAM.UsagePercent, metricBarWidth(width-8), activeThresholds.RAMPct))
 		b.WriteString("\n")
 	} else {
@@ -154,7 +154,7 @@ func (m Model) renderSingleHostOverviewThemed(host internal.SSHHost, width int) 
 
 	if len(sysInfo.Disk) > 0 {
 		disk := sysInfo.Disk[0]
-		b.WriteString(fmt.Sprintf("DISK  %s / %s  %s\n", disk.Used, disk.Size, disk.UsagePercent))
+		fmt.Fprintf(&b, "DISK  %s / %s  %s\n", disk.Used, disk.Size, disk.UsagePercent)
 	} else {
 		b.WriteString("DISK  N/A\n")
 	}
@@ -171,7 +171,7 @@ func (m Model) renderSingleHostOverviewThemed(host internal.SSHHost, width int) 
 			vramPercent = (float64(usedVRAM) / float64(totalVRAM)) * 100
 		}
 		avgUtil := totalUtil / len(sysInfo.GPUs)
-		b.WriteString(fmt.Sprintf("GPU   %d%% avg  VRAM %.0f%%\n", avgUtil, vramPercent))
+		fmt.Fprintf(&b, "GPU   %d%% avg  VRAM %.0f%%\n", avgUtil, vramPercent)
 		b.WriteString(renderNeonProgressBarSev(float64(avgUtil), metricBarWidth(width-8), activeThresholds.GPUPct))
 	} else {
 		b.WriteString(mutedStyle.Render("GPU   not detected"))
@@ -416,7 +416,7 @@ func renderGPUSummarySectionWithHistory(gpus []internal.GPUInfo, gpuHistory []fl
 	var b strings.Builder
 	utilStr := severityStyle(utilSev, mutedStyle).Render(fmt.Sprintf("util %.0f%%", avgUtil))
 	tempStr := severityStyle(tempSev, mutedStyle).Render(fmt.Sprintf("%d°C", maxTemp))
-	b.WriteString(fmt.Sprintf("%s  %s  vram %.0f%%  %dW  %s\n", mutedStyle.Render(name), utilStr, vramPercent, totalPower, tempStr))
+	fmt.Fprintf(&b, "%s  %s  vram %.0f%%  %dW  %s\n", mutedStyle.Render(name), utilStr, vramPercent, totalPower, tempStr)
 	b.WriteString(accentStyle.Render("UTIL "))
 	b.WriteString(renderNeonProgressBarSev(avgUtil, barWidth, activeThresholds.GPUPct))
 	b.WriteString("\n")
@@ -501,8 +501,8 @@ func renderDiskSection(disks []internal.DiskInfo, width int) string {
 			panelSev = diskSev
 		}
 		pct := severityStyle(diskSev, panelTextStyle).Render(fmt.Sprintf("%*s", percentWidth, disk.UsagePercent))
-		b.WriteString(fmt.Sprintf("%-*s %-*s %s %s",
-			mountWidth, mount, sizeWidth, size, pct, renderThinLineGraphSev(usagePercent, barWidth, activeThresholds.DiskPct)))
+		fmt.Fprintf(&b, "%-*s %-*s %s %s",
+			mountWidth, mount, sizeWidth, size, pct, renderThinLineGraphSev(usagePercent, barWidth, activeThresholds.DiskPct))
 		if i != len(disks)-1 {
 			b.WriteString("\n")
 		}
@@ -527,8 +527,8 @@ func renderNetworkSection(network []internal.NetworkInfo, history []float64, wid
 		iface := network[i]
 		pct := ioRatePercent(float64(iface.RXBps+iface.TXBps), maxRate)
 		bar := renderThinLineGraph(pct, barWidth)
-		b.WriteString(fmt.Sprintf("%-10s  %-11s  %-11s %s",
-			truncateVisible(iface.Name, 10), formatBytesPerSecond(iface.RXBps), formatBytesPerSecond(iface.TXBps), bar))
+		fmt.Fprintf(&b, "%-10s  %-11s  %-11s %s",
+			truncateVisible(iface.Name, 10), formatBytesPerSecond(iface.RXBps), formatBytesPerSecond(iface.TXBps), bar)
 		if i != limit-1 {
 			b.WriteString("\n")
 		}
@@ -559,10 +559,10 @@ func renderLoadSection(load internal.LoadInfo, width int) string {
 	b.WriteString("\n")
 	// Pad before styling: the ANSI codes accentStyle adds would otherwise be
 	// counted by the width verb and push the following columns out of line.
-	b.WriteString(fmt.Sprintf("%s %-7s %-7s",
+	fmt.Fprintf(&b, "%s %-7s %-7s",
 		accentStyle.Render(fmt.Sprintf("%-7.2f", load.Load1)),
 		fmt.Sprintf("%.2f", load.Load5),
-		fmt.Sprintf("%.2f", load.Load15)))
+		fmt.Sprintf("%.2f", load.Load15))
 	if load.Total > 0 {
 		b.WriteString("\n")
 		b.WriteString(mutedStyle.Render(fmt.Sprintf("%d running / %d total tasks", load.Running, load.Total)))
@@ -589,9 +589,9 @@ func renderDiskIOSection(diskIO []internal.DiskIOInfo, width int) string {
 	})
 
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("TOTAL  %s %s   %s %s\n",
+	fmt.Fprintf(&b, "TOTAL  %s %s   %s %s\n",
 		mutedStyle.Render("R"), accentStyle.Render(formatBytesPerSecond(totalRead)),
-		mutedStyle.Render("W"), accentStyle.Render(formatBytesPerSecond(totalWrite))))
+		mutedStyle.Render("W"), accentStyle.Render(formatBytesPerSecond(totalWrite)))
 	b.WriteString(mutedStyle.Render(fmt.Sprintf("%-10s  %-11s  %-11s", "DEVICE", "READ", "WRITE")))
 	barWidth := clampInt(width-39, 4, 32)
 	maxRate := 2.0 * 1024 * 1024 * 1024 // 2 GB/s fills the bar (NVMe-class)
@@ -600,8 +600,8 @@ func renderDiskIOSection(diskIO []internal.DiskIOInfo, width int) string {
 		dev := busiest[i]
 		pct := ioRatePercent(float64(dev.ReadBps+dev.WriteBps), maxRate)
 		b.WriteString("\n")
-		b.WriteString(fmt.Sprintf("%-10s  %-11s  %-11s %s",
-			truncateVisible(dev.Device, 10), formatBytesPerSecond(dev.ReadBps), formatBytesPerSecond(dev.WriteBps), renderThinLineGraph(pct, barWidth)))
+		fmt.Fprintf(&b, "%-10s  %-11s  %-11s %s",
+			truncateVisible(dev.Device, 10), formatBytesPerSecond(dev.ReadBps), formatBytesPerSecond(dev.WriteBps), renderThinLineGraph(pct, barWidth))
 	}
 	return renderPanel("DISK I/O", b.String(), width)
 }
@@ -630,10 +630,10 @@ func renderFanSection(fans []internal.FanInfo, fanHistory map[string][]float64, 
 			}
 			spark = renderSparkline(norm, sparkWidth)
 		}
-		b.WriteString(fmt.Sprintf("%-*s %s %s",
+		fmt.Fprintf(&b, "%-*s %s %s",
 			nameWidth, truncateVisible(fan.Name, nameWidth),
 			accentStyle.Render(fmt.Sprintf("%4d RPM", fan.RPM)),
-			spark))
+			spark)
 	}
 	return renderPanel("FANS", b.String(), width)
 }
@@ -689,7 +689,7 @@ func renderTemperatureSection(temps []internal.TemperatureInfo, gpus []internal.
 		// maps straight onto the bar's severity ramp.
 		pct := math.Min(100, row.celsius)
 		bar := renderThinLineGraphSev(pct, barWidth, tempThreshold)
-		b.WriteString(fmt.Sprintf("%-12s  %s %s", truncateVisible(row.name, 12), styledValue, bar))
+		fmt.Fprintf(&b, "%-12s  %s %s", truncateVisible(row.name, 12), styledValue, bar)
 		if i != limit-1 {
 			b.WriteString("\n")
 		}

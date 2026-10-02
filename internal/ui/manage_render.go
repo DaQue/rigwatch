@@ -22,7 +22,7 @@ func (m Model) renderHostForm() string {
 		if i == m.formFocus {
 			pointer = accentStyle.Render("▸ ")
 		}
-		b.WriteString(fmt.Sprintf("%s%-13s %s\n", pointer, formFieldLabels[i], in.View()))
+		fmt.Fprintf(&b, "%s%-13s %s\n", pointer, formFieldLabels[i], in.View())
 	}
 
 	// Auth toggle row (key vs password), focusable just past the text inputs.
@@ -34,7 +34,7 @@ func (m Model) renderHostForm() string {
 	if m.formAuthPassword {
 		authValue = "password"
 	}
-	b.WriteString(fmt.Sprintf("%s%-13s %s\n", authPointer, "Auth", accentStyle.Render("‹ "+authValue+" ›")))
+	fmt.Fprintf(&b, "%s%-13s %s\n", authPointer, "Auth", accentStyle.Render("‹ "+authValue+" ›"))
 
 	b.WriteString("\n")
 	if m.manageStatus != "" {
@@ -60,7 +60,7 @@ func (m Model) renderDeleteConfirm() string {
 func (m Model) renderHostKeyConfirm() string {
 	width := managePanelWidth(m.width)
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("Host %s presented this key:\n\n", accentStyle.Render(m.pendingHost.Name)))
+	fmt.Fprintf(&b, "Host %s presented this key:\n\n", accentStyle.Render(m.pendingHost.Name))
 	b.WriteString(panelTextStyle.Render(m.pendingFingerprint))
 	b.WriteString("\n\n")
 	b.WriteString(warningStyle.Render("Trust this host and add it to known_hosts?"))
@@ -76,7 +76,7 @@ func (m Model) renderPasswordPrompt() string {
 		user = "(default user)"
 	}
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("Install your public key on %s\n", accentStyle.Render(m.pendingHost.Name)))
+	fmt.Fprintf(&b, "Install your public key on %s\n", accentStyle.Render(m.pendingHost.Name))
 	b.WriteString(mutedStyle.Render(fmt.Sprintf("Authenticating as %s", user)))
 	b.WriteString("\n\n")
 	b.WriteString("Password  " + m.passwordInput.View())

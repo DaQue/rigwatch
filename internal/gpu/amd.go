@@ -531,7 +531,6 @@ func (p AMDProvider) Processes(runCmd base.RunCmdFunc) []base.Process {
 type drmClient struct {
 	pid      int
 	pdev     string
-	driver   string
 	vramKiB  uint64
 	totalKiB uint64
 	engineNs uint64
@@ -553,7 +552,6 @@ func parseDRMProcesses(out string) []base.Process {
 	// fd's lines and resolve them once the id is known.
 	type fdState struct {
 		pid   int
-		id    string
 		attrs map[string]string
 	}
 	fds := map[string]*fdState{}

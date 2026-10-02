@@ -250,7 +250,7 @@ func getCPUInfo(client *SSHClient, top string) (CPUInfo, error) {
 		// top's first sample is an average since boot, not current load, so take
 		// two and let parseTopCPUUsage keep only the last (a real one-second
 		// interval).
-		output, err = client.ExecuteCommand("env LC_ALL=C top -bn2 -d 1 -1 | grep -E '^(%Cpu|CPU:)'")
+		output, _ = client.ExecuteCommand("env LC_ALL=C top -bn2 -d 1 -1 | grep -E '^(%Cpu|CPU:)'")
 	}
 	if output != "" {
 		usage, cores := parseTopCPUUsage(output)

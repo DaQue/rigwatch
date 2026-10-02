@@ -72,7 +72,7 @@ func openEventLog(path string) *eventLog {
 	if err != nil {
 		return l
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var all []Event
 	scanner := bufio.NewScanner(f)
@@ -129,7 +129,7 @@ func (l *eventLog) add(ev Event) {
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	_, _ = f.Write(append(line, '\n'))
 }
 
@@ -174,7 +174,7 @@ func (m *Model) recordEvents(host string, info *internal.SystemInfo, insights []
 	}
 	st := m.hostEventState(host)
 
-	if st.offline != (time.Time{}) {
+	if !st.offline.IsZero() {
 		m.events.add(Event{Time: now, Host: host, Kind: eventOnline, Text: "reachable again after " + formatDowntime(now.Sub(st.offline))})
 		st.offline = time.Time{}
 	}
@@ -239,7 +239,7 @@ func (m *Model) recordFailure(host string, err error, now time.Time) {
 	}
 	st := m.hostEventState(host)
 	st.failures++
-	if st.failures == 2 && st.offline == (time.Time{}) {
+	if st.failures == 2 && st.offline.IsZero() {
 		st.offline = now
 		text := "connection lost"
 		if err != nil {
