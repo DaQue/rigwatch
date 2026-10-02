@@ -41,7 +41,10 @@ type Settings struct {
 	// normalizes to HeadlineLarge.
 	HeadlineMode       string `json:"headline_mode"`
 	ShowExtendedPanels bool   `json:"show_extended_panels"`
-	CheckForUpdates    bool   `json:"check_for_updates"`
+	// CalmMode dims hosts that have no active alerts, so a problem is the only
+	// thing on screen with full color. Toggled with z, or in settings.
+	CalmMode        bool `json:"calm_mode"`
+	CheckForUpdates bool `json:"check_for_updates"`
 	// UpdateCheckIntervalHours controls how long a successful update-check
 	// result is cached. <= 0 is normalized to the built-in default.
 	UpdateCheckIntervalHours int `json:"update_check_interval_hours"`

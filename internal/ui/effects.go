@@ -505,9 +505,8 @@ func truncateVisible(s string, width int) string {
 	if lipgloss.Width(s) <= width {
 		return s
 	}
-	runes := []rune(s)
 	var b strings.Builder
-	for _, r := range runes {
+	for _, r := range s {
 		if lipgloss.Width(b.String()+string(r)) > width-1 {
 			break
 		}

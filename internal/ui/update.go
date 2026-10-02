@@ -2,6 +2,8 @@ package ui
 
 import (
 	"fmt"
+	"math"
+	"sort"
 	"time"
 
 	"github.com/allisonhere/rigwatch/internal"
@@ -21,7 +23,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "ctrl+c" {
 			for _, client := range m.clients {
 				if client != nil {
-					client.Close()
+					_ = client.Close()
 				}
 			}
 			return m, tea.Quit
@@ -50,6 +52,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The settings screen owns all key input while it's open.
 		if m.screen == ScreenSettings {
 			return m.updateSettings(msg)
+		}
+
+		// The timeline screen owns key input (scrolling, filtering) while open.
+		if m.screen == ScreenTimeline {
+			return m.updateTimeline(msg)
 		}
 
 		// The connect-time password prompt owns all key input while it's open.
@@ -108,7 +115,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q":
 			for _, client := range m.clients {
 				if client != nil {
-					client.Close()
+					_ = client.Close()
 				}
 			}
 			return m, tea.Quit
@@ -205,6 +212,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.openModeMenu()
 				return m, nil
 			}
+		case "e":
+			if m.screen == ScreenDashboard || m.screen == ScreenOverview || m.screen == ScreenQuad {
+				m.openTimeline()
+				return m, nil
+			}
+		case "z":
+			if m.screen == ScreenDashboard || m.screen == ScreenOverview || m.screen == ScreenQuad {
+				m.toggleCalmMode()
+				return m, nil
+			}
 		case "g":
 			switch m.screen {
 			case ScreenDashboard, ScreenOverview:
@@ -238,7 +255,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.sshOnExit = currentHost.Name
 					for _, client := range m.clients {
 						if client != nil {
-							client.Close()
+							_ = client.Close()
 						}
 					}
 					return m, tea.Quit
@@ -290,6 +307,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case SystemInfoMsg:
 		if msg.err != nil {
+			m.recordFailure(msg.hostName, msg.err, time.Now())
 			return m, nil
 		}
 		now := time.Now()
@@ -297,11 +315,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			elapsed := now.Sub(m.lastUpdates[msg.hostName]).Seconds()
 			msg.info.Network = rateNetworkInterfaces(previous.Network, msg.info.Network, elapsed)
 			msg.info.DiskIO = rateDiskIO(previous.DiskIO, msg.info.DiskIO, elapsed)
+			msg.info.GPUProcs = rateGPUProcesses(previous.GPUProcs, msg.info.GPUProcs, elapsed)
 		}
 		m.sysInfos[msg.hostName] = msg.info
 		m.lastUpdates[msg.hostName] = now
 		m.appendMetricHistory(msg.hostName, msg.info)
 		m.trackAlertOnsets(msg.hostName, msg.info)
+		m.recordInsights(msg.hostName, msg.info, now)
 
 		if m.screen == ScreenConnecting && len(m.selectedHosts) > 0 {
 			firstHost := m.selectedHosts[0]
@@ -679,5 +699,62 @@ func rateDiskIO(previous []internal.DiskIOInfo, current []internal.DiskIOInfo, e
 		rated[i].ReadBps = uint64(float64(dev.ReadBytes-prev.ReadBytes) / elapsedSeconds)
 		rated[i].WriteBps = uint64(float64(dev.WriteBytes-prev.WriteBytes) / elapsedSeconds)
 	}
+	return rated
+}
+
+// recordInsights feeds the trend store, derives throttling and forecast findings
+// for the host, and logs whatever changed since the last poll.
+func (m *Model) recordInsights(hostName string, info *internal.SystemInfo, now time.Time) {
+	if m.trends == nil {
+		m.trends = make(map[string]*trendStore)
+	}
+	ts := m.trends[hostName]
+	if ts == nil {
+		ts = newTrendStore()
+		m.trends[hostName] = ts
+	}
+	ts.record(info, now)
+	insights := computeInsights(ts, info, now)
+
+	history := m.metricHistories[hostName]
+	history.Insights = insights
+	m.metricHistories[hostName] = history
+
+	m.recordEvents(hostName, info, insights, now)
+}
+
+// rateGPUProcesses fills in per-process GPU utilization for drivers that expose
+// only cumulative busy time (amdgpu fdinfo), from the change since the last poll,
+// then orders the list busiest first. Drivers that report utilization directly
+// are left as they are. A process seen for the first time stays at -1 (unknown)
+// rather than showing a made-up zero.
+func rateGPUProcesses(previous, current []internal.GPUProcessInfo, elapsedSeconds float64) []internal.GPUProcessInfo {
+	type key struct {
+		pid int
+		gpu string
+	}
+	prev := make(map[key]internal.GPUProcessInfo, len(previous))
+	for _, p := range previous {
+		prev[key{p.PID, p.GPU}] = p
+	}
+	rated := make([]internal.GPUProcessInfo, len(current))
+	copy(rated, current)
+	for i, p := range rated {
+		if p.UtilPct >= 0 || p.EngineNs == 0 || elapsedSeconds <= 0 {
+			continue
+		}
+		before, ok := prev[key{p.PID, p.GPU}]
+		if !ok || p.EngineNs < before.EngineNs {
+			continue
+		}
+		pct := float64(p.EngineNs-before.EngineNs) / (elapsedSeconds * 1e9) * 100
+		rated[i].UtilPct = math.Min(pct, 100)
+	}
+	sort.SliceStable(rated, func(i, j int) bool {
+		if rated[i].UtilPct != rated[j].UtilPct {
+			return rated[i].UtilPct > rated[j].UtilPct
+		}
+		return rated[i].VRAMMB > rated[j].VRAMMB
+	})
 	return rated
 }

@@ -1,4 +1,4 @@
-.PHONY: build clean install test run snapshot version
+.PHONY: build clean install test run snapshot version release
 
 BINARY_NAME=rigwatch
 INSTALL_PATH=$(HOME)/.local/bin
@@ -56,6 +56,11 @@ deps:
 version:
 	@./scripts/get_version.sh --json
 
+# Interactive release console (version bump, tag, GitHub release, AUR).
+# Shared with the other Tide repositories; see deploy.conf.
+release:
+	@./deploy.sh
+
 help:
 	@echo "Available targets:"
 	@echo "  build      - Build the binary with version info"
@@ -68,4 +73,5 @@ help:
 	@echo "  test       - Run tests"
 	@echo "  deps       - Download and tidy dependencies"
 	@echo "  version    - Show current version information"
+	@echo "  release    - Open the release console (./deploy.sh; --check, --dry-run)"
 

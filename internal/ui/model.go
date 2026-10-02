@@ -24,6 +24,7 @@ const (
 	ScreenQuad
 	ScreenSettings
 	ScreenPasswordPrompt
+	ScreenTimeline
 )
 
 type Model struct {
@@ -60,6 +61,14 @@ type Model struct {
 	helpVisible       bool
 	modeMenuOpen      bool // display-mode picker overlay
 	modeMenuIdx       int
+
+	// Event log and the state that turns polls into events.
+	events         *eventLog
+	eventStates    map[string]*eventState
+	trends         map[string]*trendStore
+	timelinePrev   Screen
+	timelineScroll int
+	timelineHost   string // "" = all hosts
 
 	// Connection-manager sub-state (host-list screen only).
 	manageMode         manageMode
@@ -111,6 +120,10 @@ type metricHistory struct {
 	Temp    []float64
 	Network []float64
 	Fans    map[string][]float64 // RPM history keyed by fan name
+
+	// Insights are the derived findings (throttling, forecasts) for the latest
+	// poll. They sit here because this is what the metric panels already receive.
+	Insights []Insight
 }
 
 type TickMsg time.Time
@@ -229,6 +242,9 @@ func InitialModel(hosts []internal.SSHHost, updateInterval time.Duration) Model 
 		metricHistories:   make(map[string]metricHistory),
 		alertOnsets:       make(map[string]map[string]alertOnset),
 		alertSamples:      make(map[string]int64),
+		events:            openEventLog(eventLogPath()),
+		eventStates:       make(map[string]*eventState),
+		trends:            make(map[string]*trendStore),
 		updateInterval:    updateInterval,
 		themePrefs:        loadThemePreferencesOrDefault(),
 		settings:          loadSettingsOrDefault(),
@@ -278,6 +294,9 @@ func InitialModelWithHosts(allHosts []internal.SSHHost, selectedHosts []internal
 		metricHistories:   make(map[string]metricHistory),
 		alertOnsets:       make(map[string]map[string]alertOnset),
 		alertSamples:      make(map[string]int64),
+		events:            openEventLog(eventLogPath()),
+		eventStates:       make(map[string]*eventState),
+		trends:            make(map[string]*trendStore),
 		updateInterval:    updateInterval,
 		themePrefs:        loadThemePreferencesOrDefault(),
 		settings:          loadSettingsOrDefault(),

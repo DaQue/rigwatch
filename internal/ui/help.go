@@ -36,6 +36,8 @@ func helpGroups() []helpGroup {
 			{"n", "next host"},
 			{"t", "overview"},
 			{"g", "grid view"},
+			{"e", "event timeline"},
+			{"z", "calm mode (dim healthy hosts)"},
 			{"s", "open shell (ssh)"},
 			{"c", "back to host list"},
 		}},
@@ -46,6 +48,11 @@ func helpGroups() []helpGroup {
 			{"[ / ]", "cycle focused host theme"},
 			{"w", "save layout"},
 			{"t / g / esc", "back to dashboard"},
+		}},
+		{"Timeline", []helpEntry{
+			{"↑/↓  pgup/pgdn", "scroll"},
+			{"f", "filter by host"},
+			{"e / esc", "back"},
 		}},
 		{"Settings", []helpEntry{
 			{"↑/↓", "move between fields"},

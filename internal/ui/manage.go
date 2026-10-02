@@ -294,7 +294,7 @@ func testConnectionCmd(host internal.SSHHost) tea.Cmd {
 	return func() tea.Msg {
 		client, err := internal.NewSSHClient(host)
 		if client != nil {
-			client.Close()
+			_ = client.Close()
 		}
 		return testConnectedMsg{err: err}
 	}

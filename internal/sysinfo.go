@@ -2,6 +2,8 @@ package internal
 
 import (
 	"fmt"
+	"math"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,10 +22,11 @@ type SystemInfo struct {
 	Processes []ProcessInfo
 
 	// Extended sensors (rendered only in single-host view).
-	Swap   SwapInfo
-	Load   LoadInfo
-	DiskIO []DiskIOInfo
-	Fans   []FanInfo
+	Swap     SwapInfo
+	GPUProcs []GPUProcessInfo
+	Load     LoadInfo
+	DiskIO   []DiskIOInfo
+	Fans     []FanInfo
 
 	// Uptime is how long the host has been running (0 if unavailable).
 	Uptime time.Duration
@@ -35,6 +38,10 @@ type CPUInfo struct {
 	Usage        string
 	UsagePercent float64
 	Cores        []CPUCoreInfo
+	// FreqMHz is the mean current clock across cores and MaxFreqMHz the highest
+	// rated clock; 0 when cpufreq is not exposed.
+	FreqMHz    int
+	MaxFreqMHz int
 }
 
 type CPUCoreInfo struct {
@@ -51,6 +58,19 @@ type GPUInfo struct {
 	PowerDraw   int // in Watts
 	PowerLimit  int // in Watts
 	Temperature int // in Celsius
+	ClockMHz    int
+	MaxClockMHz int
+	Throttle    []string
+}
+
+// GPUProcessInfo is one process using a GPU.
+type GPUProcessInfo struct {
+	GPU      string
+	PID      int
+	Name     string
+	VRAMMB   int
+	EngineNs uint64  // cumulative busy time, when the driver reports it
+	UtilPct  float64 // derived by the UI layer (or reported directly); -1 = unknown
 }
 
 type RAMInfo struct {
@@ -66,6 +86,11 @@ type DiskInfo struct {
 	Available    string
 	UsagePercent string
 	MountPoint   string
+
+	// Exact byte counts, for trend forecasting; the string fields above are
+	// rounded for display.
+	TotalBytes uint64
+	UsedBytes  uint64
 }
 
 type TemperatureInfo struct {
@@ -118,14 +143,20 @@ type FanInfo struct {
 func GatherSystemInfo(client *SSHClient) (*SystemInfo, error) {
 	info := &SystemInfo{}
 
-	cpuInfo, err := getCPUInfo(client)
+	top := getTopSnapshot(client)
+
+	cpuInfo, err := getCPUInfo(client, top)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get CPU info: %w", err)
 	}
+	cpuInfo.FreqMHz, cpuInfo.MaxFreqMHz = getCPUFreq(client)
 	info.CPU = cpuInfo
 
 	gpuInfo, _ := getGPUInfo(client)
 	info.GPUs = gpuInfo
+	if len(gpuInfo) > 0 {
+		info.GPUProcs = getGPUProcesses(client)
+	}
 
 	ramInfo, err := getRAMInfo(client)
 	if err != nil {
@@ -147,7 +178,7 @@ func GatherSystemInfo(client *SSHClient) (*SystemInfo, error) {
 		info.Network = networkInfo
 	}
 
-	if processInfo, err := getProcessInfo(client); err == nil {
+	if processInfo, err := getProcessInfo(client, top); err == nil {
 		info.Processes = processInfo
 	}
 
@@ -193,7 +224,7 @@ func parseUptime(output string) time.Duration {
 	return time.Duration(seconds * float64(time.Second))
 }
 
-func getCPUInfo(client *SSHClient) (CPUInfo, error) {
+func getCPUInfo(client *SSHClient, top string) (CPUInfo, error) {
 	info := CPUInfo{}
 
 	output, err := client.ExecuteCommand("lscpu | grep -E 'Model name|CPU\\(s\\):'")
@@ -214,8 +245,14 @@ func getCPUInfo(client *SSHClient) (CPUInfo, error) {
 		}
 	}
 
-	output, err = client.ExecuteCommand("top -bn1 -1 | grep -E '^(%Cpu|CPU:)'")
-	if err == nil {
+	output = top
+	if output == "" {
+		// top's first sample is an average since boot, not current load, so take
+		// two and let parseTopCPUUsage keep only the last (a real one-second
+		// interval).
+		output, _ = client.ExecuteCommand("env LC_ALL=C top -bn2 -d 1 -1 | grep -E '^(%Cpu|CPU:)'")
+	}
+	if output != "" {
 		usage, cores := parseTopCPUUsage(output)
 		if usage > 0 || len(cores) > 0 {
 			info.UsagePercent = usage
@@ -231,9 +268,14 @@ func getCPUInfo(client *SSHClient) (CPUInfo, error) {
 	return info, nil
 }
 
+// parseTopCPUUsage extracts aggregate and per-core usage from top's CPU lines.
+// When top ran several iterations the output holds one block per iteration; only
+// the last block is kept, since earlier ones are since-boot averages.
 func parseTopCPUUsage(output string) (float64, []CPUCoreInfo) {
 	var aggregate float64
 	var cores []CPUCoreInfo
+	sawAggregate := false
+	seenCores := map[int]bool{}
 
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
@@ -247,6 +289,10 @@ func parseTopCPUUsage(output string) (float64, []CPUCoreInfo) {
 		}
 
 		if strings.HasPrefix(line, "%Cpu(s)") || strings.HasPrefix(line, "CPU:") {
+			if sawAggregate {
+				cores, seenCores = nil, map[int]bool{} // a new iteration begins
+			}
+			sawAggregate = true
 			aggregate = usage
 			continue
 		}
@@ -255,6 +301,10 @@ func parseTopCPUUsage(output string) (float64, []CPUCoreInfo) {
 			label := strings.TrimPrefix(strings.Fields(line)[0], "%Cpu")
 			label = strings.TrimSuffix(label, ":")
 			if idx, err := strconv.Atoi(label); err == nil {
+				if seenCores[idx] { // per-core mode has no aggregate line; a repeat marks a new iteration
+					cores, seenCores, aggregate = nil, map[int]bool{}, 0
+				}
+				seenCores[idx] = true
 				cores = append(cores, CPUCoreInfo{Index: idx, UsagePercent: usage})
 			}
 		}
@@ -299,6 +349,16 @@ func normalizeCPUCores(count string, cores []CPUCoreInfo) []CPUCoreInfo {
 	return normalized
 }
 
+func clampPercent(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > 100 {
+		return 100
+	}
+	return v
+}
+
 func parseCPUUsageLine(line string) (float64, bool) {
 	fields := strings.Fields(strings.ReplaceAll(line, ",", ""))
 	for i, field := range fields {
@@ -316,7 +376,7 @@ func parseCPUUsageLine(line string) (float64, bool) {
 		if err != nil {
 			return 0, false
 		}
-		return 100 - idle, true
+		return clampPercent(100 - idle), true
 	}
 
 	return 0, false
@@ -343,10 +403,63 @@ func getGPUInfo(client *SSHClient) ([]GPUInfo, error) {
 			PowerDraw:   dev.PowerDraw,
 			PowerLimit:  dev.PowerLimit,
 			Temperature: dev.Temperature,
+			ClockMHz:    dev.ClockMHz,
+			MaxClockMHz: dev.MaxClockMHz,
+			Throttle:    dev.Throttle,
 		}
 	}
 
 	return gpus, nil
+}
+
+func getGPUProcesses(client *SSHClient) []GPUProcessInfo {
+	procs := gpu.QueryProcesses(func(cmd string) (string, error) { return client.ExecuteCommand(cmd) })
+	out := make([]GPUProcessInfo, len(procs))
+	for i, p := range procs {
+		out[i] = GPUProcessInfo{GPU: p.GPU, PID: p.PID, Name: p.Name, VRAMMB: p.VRAMMB, EngineNs: p.EngineNs, UtilPct: float64(p.UtilPct)}
+	}
+	return out
+}
+
+// cpuFreqCommand reads every core's current clock and rated maximum in one call.
+// It runs under sh so a login shell can't abort on the cpu* glob.
+const cpuFreqCommand = "sh -c 'grep -H . /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_cur_freq /sys/devices/system/cpu/cpu[0-9]*/cpufreq/cpuinfo_max_freq 2>/dev/null; true'"
+
+func getCPUFreq(client *SSHClient) (cur, max int) {
+	output, err := client.ExecuteCommand(cpuFreqCommand)
+	if err != nil {
+		return 0, 0
+	}
+	return parseCPUFreq(output)
+}
+
+// parseCPUFreq averages scaling_cur_freq over the cores and takes the highest
+// cpuinfo_max_freq. The kernel reports kHz.
+func parseCPUFreq(output string) (curMHz, maxMHz int) {
+	var sum, n, maxKHz int
+	for _, line := range strings.Split(output, "\n") {
+		path, value, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		khz, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil || khz <= 0 {
+			continue
+		}
+		switch {
+		case strings.HasSuffix(path, "scaling_cur_freq"):
+			sum += khz
+			n++
+		case strings.HasSuffix(path, "cpuinfo_max_freq"):
+			if khz > maxKHz {
+				maxKHz = khz
+			}
+		}
+	}
+	if n > 0 {
+		curMHz = sum / n / 1000
+	}
+	return curMHz, maxKHz / 1000
 }
 
 func getRAMInfo(client *SSHClient) (RAMInfo, error) {
@@ -375,46 +488,107 @@ func getRAMInfo(client *SSHClient) (RAMInfo, error) {
 }
 
 func getDiskInfo(client *SSHClient) ([]DiskInfo, error) {
-	output, err := client.ExecuteCommand("df -h | grep -E '^/dev/'")
+	output, err := client.ExecuteCommand("df -kP | grep -E '^/dev/'")
 	if err != nil {
 		return nil, err
 	}
 
+	return parseDF(output), nil
+}
+
+// parseDF parses `df -kP` rows for real block devices. The same device often
+// appears several times (btrfs subvolumes, bind mounts) with identical usage, so
+// each device is reported once under its shortest mount point. Loop devices —
+// snap/appimage squashfs mounts that are always 100% full — are noise.
+func parseDF(output string) []DiskInfo {
 	var disks []DiskInfo
-	lines := strings.Split(strings.TrimSpace(output), "\n")
-	for _, line := range lines {
-		if line == "" {
+	byDevice := map[string]int{}
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		parts := strings.Fields(line)
+		if len(parts) < 6 || strings.HasPrefix(parts[0], "/dev/loop") {
 			continue
 		}
-
-		parts := strings.Fields(line)
-		if len(parts) >= 6 {
-			disk := DiskInfo{
-				Device:       parts[0],
-				Size:         parts[1],
-				Used:         parts[2],
-				Available:    parts[3],
-				UsagePercent: parts[4],
-				MountPoint:   parts[5],
-			}
-			disks = append(disks, disk)
+		totalKiB, err1 := strconv.ParseUint(parts[1], 10, 64)
+		usedKiB, err2 := strconv.ParseUint(parts[2], 10, 64)
+		availKiB, err3 := strconv.ParseUint(parts[3], 10, 64)
+		if err1 != nil || err2 != nil || err3 != nil {
+			continue
 		}
+		disk := DiskInfo{
+			Device:       parts[0],
+			Size:         humanKiB(totalKiB),
+			Used:         humanKiB(usedKiB),
+			Available:    humanKiB(availKiB),
+			UsagePercent: parts[4],
+			MountPoint:   strings.Join(parts[5:], " "), // mount points may contain spaces
+			TotalBytes:   totalKiB * 1024,
+			UsedBytes:    usedKiB * 1024,
+		}
+		if i, seen := byDevice[disk.Device]; seen {
+			if len(disk.MountPoint) < len(disks[i].MountPoint) {
+				disks[i] = disk
+			}
+			continue
+		}
+		byDevice[disk.Device] = len(disks)
+		disks = append(disks, disk)
 	}
+	return disks
+}
 
-	return disks, nil
+// humanKiB formats a size like `df -h`: binary units, one decimal below 10 and
+// whole numbers above, rounding up as coreutils does.
+func humanKiB(kib uint64) string {
+	units := []string{"K", "M", "G", "T", "P"}
+	v := float64(kib)
+	i := 0
+	for v >= 1024 && i < len(units)-1 {
+		v /= 1024
+		i++
+	}
+	if v < 10 && i > 0 {
+		return fmt.Sprintf("%.1f%s", math.Ceil(v*10)/10, units[i])
+	}
+	return fmt.Sprintf("%.0f%s", math.Ceil(v), units[i])
 }
 
 func getTemperatureInfo(client *SSHClient) ([]TemperatureInfo, error) {
-	output, err := client.ExecuteCommand("grep -H . /sys/class/thermal/thermal_zone*/type /sys/class/thermal/thermal_zone*/temp")
-	if err != nil {
-		// Try hwmon fallback for CPU temp
-		return getHwmonCPUTemp(client)
-	}
+	// grep exits non-zero if any single zone is unreadable, yet still prints the
+	// rest, so judge by what parses rather than by the exit status.
+	output, _ := client.ExecuteCommand("grep -H . /sys/class/thermal/thermal_zone*/type /sys/class/thermal/thermal_zone*/temp")
 	temps := parseThermalZones(output)
+	hasCPU := false
+	for _, t := range temps {
+		if strings.HasPrefix(t.Name, "CPU") {
+			hasCPU = true
+			break
+		}
+	}
+	if !hasCPU {
+		// Boards that only expose generic ACPI zones (acpitz) still publish the
+		// real CPU die temperature through hwmon (k10temp/coretemp).
+		if hw, err := getHwmonCPUTemp(client); err == nil {
+			temps = append(hw, dropGenericACPIZones(temps)...)
+		}
+	}
 	if len(temps) == 0 {
-		return getHwmonCPUTemp(client)
+		return nil, fmt.Errorf("no temperature sensors")
 	}
 	return temps, nil
+}
+
+// dropGenericACPIZones removes firmware "acpitz" zones. They are unlabelled
+// board-level readings that usually mirror the CPU or report a fixed
+// placeholder, so once a real CPU sensor is known they only add duplicate rows
+// and duplicate alerts.
+func dropGenericACPIZones(temps []TemperatureInfo) []TemperatureInfo {
+	kept := temps[:0:0]
+	for _, t := range temps {
+		if !strings.HasPrefix(t.Name, "acpitz") {
+			kept = append(kept, t)
+		}
+	}
+	return kept
 }
 
 func getHwmonCPUTemp(client *SSHClient) ([]TemperatureInfo, error) {
@@ -575,6 +749,22 @@ func parseThermalZones(output string) []TemperatureInfo {
 		}
 		temps = append(temps, TemperatureInfo{Name: name, Celsius: data.celsius})
 	}
+
+	// Several zones commonly share a type (three "acpitz"); number the repeats so
+	// the rows are distinguishable.
+	total := map[string]int{}
+	for _, t := range temps {
+		total[t.Name]++
+	}
+	seen := map[string]int{}
+	for i, t := range temps {
+		if total[t.Name] > 1 {
+			seen[t.Name]++
+			if seen[t.Name] > 1 {
+				temps[i].Name = fmt.Sprintf("%s %d", t.Name, seen[t.Name])
+			}
+		}
+	}
 	return temps
 }
 
@@ -640,7 +830,7 @@ func isVirtualNetworkInterface(name string) bool {
 	if name == "lo" {
 		return true
 	}
-	virtualPrefixes := []string{"docker", "veth", "br-", "virbr", "tun", "tap", "tailscale", "zt", "wg"}
+	virtualPrefixes := []string{"docker", "veth", "br-", "virbr", "vnet", "tun", "tap", "tailscale", "zt", "wg", "lxc", "cni", "flannel", "cali", "podman"}
 	for _, prefix := range virtualPrefixes {
 		if strings.HasPrefix(name, prefix) {
 			return true
@@ -671,7 +861,75 @@ func computeNetworkRates(previous []NetworkInfo, current []NetworkInfo, elapsedS
 	return rated
 }
 
-func getProcessInfo(client *SSHClient) ([]ProcessInfo, error) {
+// topSnapshotCommand takes two top samples one second apart and keeps only the
+// second: the first covers the time since boot (or since each process started),
+// the second covers the last second, which is what a live monitor should show.
+// LC_ALL=C pins the decimal separator, since a comma locale would otherwise turn
+// "12,5" into 125. Output is the summary and the head of the process table.
+const topSnapshotCommand = "env LC_ALL=C top -bn2 -d 1 -1 -w 512 -o %CPU | awk '/^top -/{n++} n==2' | head -n 120"
+
+// getTopSnapshot returns the live top output, or "" when top lacks the needed
+// options (BusyBox, older procps) and callers should use their fallbacks.
+func getTopSnapshot(client *SSHClient) string {
+	output, err := client.ExecuteCommand(topSnapshotCommand)
+	if err != nil || len(parseTopTable(output, 1)) == 0 {
+		return ""
+	}
+	return output
+}
+
+// parseTopTable reads the process table from top's batch output by column name,
+// so it doesn't depend on exactly which columns this top version prints.
+func parseTopTable(output string, limit int) []ProcessInfo {
+	var processes []ProcessInfo
+	pidCol, cpuCol, memCol, cmdCol := -1, -1, -1, -1
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) == 0 {
+			continue
+		}
+		if pidCol < 0 {
+			if fields[0] != "PID" {
+				continue
+			}
+			for i, f := range fields {
+				switch f {
+				case "PID":
+					pidCol = i
+				case "%CPU":
+					cpuCol = i
+				case "%MEM":
+					memCol = i
+				case "COMMAND":
+					cmdCol = i
+				}
+			}
+			if cpuCol < 0 || memCol < 0 || cmdCol < 0 {
+				return nil
+			}
+			continue
+		}
+		if len(fields) <= cmdCol {
+			continue
+		}
+		pid, pidErr := strconv.Atoi(fields[pidCol])
+		cpu, cpuErr := strconv.ParseFloat(fields[cpuCol], 64)
+		mem, memErr := strconv.ParseFloat(fields[memCol], 64)
+		if pidErr != nil || cpuErr != nil || memErr != nil {
+			continue
+		}
+		processes = append(processes, ProcessInfo{PID: pid, Command: strings.Join(fields[cmdCol:], " "), CPUPercent: cpu, MemPercent: mem})
+		if len(processes) >= limit {
+			break
+		}
+	}
+	return processes
+}
+
+func getProcessInfo(client *SSHClient, top string) ([]ProcessInfo, error) {
+	if processes := parseTopTable(top, 25); len(processes) > 0 {
+		return processes, nil
+	}
 	output, err := client.ExecuteCommand("ps -eo pid=,comm=,pcpu=,pmem= --sort=-pcpu | head -n 25")
 	if err != nil {
 		return nil, err
@@ -778,7 +1036,7 @@ func parseDiskStats(output string) []DiskIOInfo {
 			continue
 		}
 		device := fields[2]
-		if strings.HasPrefix(device, "loop") || strings.HasPrefix(device, "ram") {
+		if strings.HasPrefix(device, "loop") || strings.HasPrefix(device, "ram") || isDerivedBlockDevice(device) {
 			continue
 		}
 		readSectors, err1 := strconv.ParseUint(fields[5], 10, 64)
@@ -793,6 +1051,17 @@ func parseDiskStats(output string) []DiskIOInfo {
 		})
 	}
 	return stats
+}
+
+// partitionPattern matches partitions of SCSI/virtio/IDE disks (sda1), and of
+// NVMe/MMC disks (nvme0n1p2, mmcblk0p1).
+var partitionPattern = regexp.MustCompile(`^((s|v|xv|h)d[a-z]+[0-9]+|(nvme[0-9]+n[0-9]+|mmcblk[0-9]+)p[0-9]+)$`)
+
+// isDerivedBlockDevice reports whether a device's traffic is already counted on
+// another entry: partitions repeat their parent disk, and device-mapper/md
+// volumes repeat the disks beneath them. Summing them would inflate totals.
+func isDerivedBlockDevice(name string) bool {
+	return partitionPattern.MatchString(name) || strings.HasPrefix(name, "dm-") || strings.HasPrefix(name, "md")
 }
 
 func getFanInfo(client *SSHClient) ([]FanInfo, error) {

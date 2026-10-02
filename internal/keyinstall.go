@@ -93,7 +93,7 @@ func ScanHostKey(host SSHHost) (ssh.PublicKey, string, error) {
 
 	client, err := ssh.Dial("tcp", addr, config)
 	if client != nil {
-		client.Close()
+		_ = client.Close()
 	}
 
 	if captured != nil {
@@ -127,7 +127,7 @@ func AddKnownHost(hostname, port string, key ssh.PublicKey) error {
 	if err != nil {
 		return fmt.Errorf("unable to open known_hosts: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := f.WriteString(line); err != nil {
 		return fmt.Errorf("unable to write known_hosts: %w", err)
 	}
@@ -179,13 +179,13 @@ func InstallPublicKey(host SSHHost, password string, pubKey []byte) error {
 	if err != nil {
 		return fmt.Errorf("failed to connect to %s: %w", addr, err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	session, err := client.NewSession()
 	if err != nil {
 		return err
 	}
-	defer session.Close()
+	defer func() { _ = session.Close() }()
 
 	session.Stdin = bytes.NewReader(pubKey)
 	if output, err := session.CombinedOutput(buildInstallScript()); err != nil {
