@@ -1,4 +1,4 @@
-.PHONY: build clean install test run snapshot version
+.PHONY: build clean install test run snapshot version release
 
 BINARY_NAME=rigwatch
 INSTALL_PATH=$(HOME)/.local/bin
@@ -56,6 +56,12 @@ deps:
 version:
 	@./scripts/get_version.sh --json
 
+# make release            patch release (v0.0.20 -> v0.0.21)
+# make release BUMP=minor patch | minor | major | vX.Y.Z
+# make release ARGS=--dry-run
+release:
+	@./scripts/release.sh $(or $(BUMP),patch) $(ARGS)
+
 help:
 	@echo "Available targets:"
 	@echo "  build      - Build the binary with version info"
@@ -68,4 +74,5 @@ help:
 	@echo "  test       - Run tests"
 	@echo "  deps       - Download and tidy dependencies"
 	@echo "  version    - Show current version information"
+	@echo "  release    - Verify, tag and push a release (BUMP=patch|minor|major|vX.Y.Z, ARGS=--dry-run)"
 
