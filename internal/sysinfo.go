@@ -463,13 +463,27 @@ func getTemperatureInfo(client *SSHClient) ([]TemperatureInfo, error) {
 		// Boards that only expose generic ACPI zones (acpitz) still publish the
 		// real CPU die temperature through hwmon (k10temp/coretemp).
 		if hw, err := getHwmonCPUTemp(client); err == nil {
-			temps = append(hw, temps...)
+			temps = append(hw, dropGenericACPIZones(temps)...)
 		}
 	}
 	if len(temps) == 0 {
 		return nil, fmt.Errorf("no temperature sensors")
 	}
 	return temps, nil
+}
+
+// dropGenericACPIZones removes firmware "acpitz" zones. They are unlabelled
+// board-level readings that usually mirror the CPU or report a fixed
+// placeholder, so once a real CPU sensor is known they only add duplicate rows
+// and duplicate alerts.
+func dropGenericACPIZones(temps []TemperatureInfo) []TemperatureInfo {
+	kept := temps[:0:0]
+	for _, t := range temps {
+		if !strings.HasPrefix(t.Name, "acpitz") {
+			kept = append(kept, t)
+		}
+	}
+	return kept
 }
 
 func getHwmonCPUTemp(client *SSHClient) ([]TemperatureInfo, error) {

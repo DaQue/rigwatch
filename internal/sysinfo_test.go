@@ -363,3 +363,10 @@ MiB Mem :  63425.0 total
 		t.Fatal("expected nil without a PID header")
 	}
 }
+
+func TestDropGenericACPIZonesKeepsRealSensors(t *testing.T) {
+	got := dropGenericACPIZones([]TemperatureInfo{{Name: "acpitz"}, {Name: "acpitz 2"}, {Name: "iwlwifi"}})
+	if len(got) != 1 || got[0].Name != "iwlwifi" {
+		t.Fatalf("got %+v, want only iwlwifi", got)
+	}
+}
