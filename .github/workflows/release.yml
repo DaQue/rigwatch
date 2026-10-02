@@ -3,31 +3,70 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 permissions:
   contents: write
 
 jobs:
-  release:
-    name: Release
+  build:
+    name: Build & Release
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
 
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          distribution: goreleaser
-          version: '~> v2'
-          args: release --clean
+      - name: Test
+        run: go test ./...
+
+      # Two sets of assets, because two things download them:
+      #   rigwatch-<os>-<x86_64|aarch64>.tar.gz  the deploy console and the AUR package
+      #   rigwatch-<os>-<amd64|arm64>[.exe]      install.sh, which fetches the bare binary
+      - name: Build binaries
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir -p dist
+          pkg=github.com/allisonhere/rigwatch/internal
+          flags="-s -w -X $pkg.Version=${TAG#v} -X $pkg.GitCommit=$GITHUB_SHA -X $pkg.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ) -X $pkg.GitTag=$TAG"
+          targets=(
+            "linux   amd64 x86_64"
+            "linux   arm64 aarch64"
+            "darwin  amd64 x86_64"
+            "darwin  arm64 aarch64"
+            "windows amd64 x86_64"
+            "windows arm64 aarch64"
+          )
+          for entry in "${targets[@]}"; do
+            read -r goos goarch label <<< "$entry"
+            ext=""; [ "$goos" = windows ] && ext=".exe"
+            raw="dist/rigwatch-$goos-$goarch$ext"
+            CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch go build -trimpath -ldflags="$flags" -o "$raw" ./cmd/rigwatch
+            if [ "$goos" != windows ]; then
+              name="rigwatch-$goos-$label"
+              cp "$raw" "dist/$name"
+              tar -czf "dist/$name.tar.gz" -C dist "$name"
+              rm "dist/$name"
+            fi
+            echo "Built $raw"
+          done
+
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum rigwatch-* > checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          name: "Release ${{ github.ref_name }}"
+          generate_release_notes: true
+          files: |
+            dist/rigwatch-*
+            dist/checksums.txt

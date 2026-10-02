@@ -180,14 +180,19 @@ make build
 make run
 ```
 
-### Build for Multiple Platforms
+### Releasing
 
-The project uses [GoReleaser](https://goreleaser.com/) for multi-platform builds and releases.
+Releases go through the same console as the other Tide apps:
 
-**Test the release locally:**
 ```bash
-goreleaser release --snapshot --clean
+./deploy.sh            # interactive: bump, build check, tag, GitHub release, AUR
+./deploy.sh --check    # readiness checklist only
+./deploy.sh --dry-run  # rehearse without committing, tagging or pushing
 ```
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`, which publishes `rigwatch-<os>-<arch>.tar.gz` assets (for the AUR `rigwatch-bin` package), the bare `rigwatch-<os>-<arch>` binaries that `install.sh` downloads, and `checksums.txt`. `deploy.sh` is shared across the Tide repositories; app details live in `deploy.conf`.
+
+### Build for Multiple Platforms
 
 **Build all platforms with Make:**
 ```bash
