@@ -116,9 +116,9 @@ func TestAMDSysfsReportsEveryDiscreteCard(t *testing.T) {
 	if devices[0].Name != "AMD Radeon GPU" {
 		t.Errorf("Name = %q, want the generic fallback", devices[0].Name)
 	}
-	// amdgpu did not expose a cap here, so the conservative default stands in.
-	if devices[0].PowerLimit != 700 {
-		t.Errorf("PowerLimit = %d, want the 700 W fallback", devices[0].PowerLimit)
+	// amdgpu did not expose a cap here; report unknown (0) rather than invent one.
+	if devices[0].PowerLimit != 0 {
+		t.Errorf("PowerLimit = %d, want 0 (unknown)", devices[0].PowerLimit)
 	}
 }
 
@@ -168,5 +168,31 @@ func TestAMDVendorToolingStillWins(t *testing.T) {
 	})
 	if probed {
 		t.Fatal("sysfs probed even though rocm-smi is installed")
+	}
+}
+
+// Captured from a Strix Halo box: a warning line precedes the table, and the
+// columns do not sit where older ROCm releases put them.
+func TestParseRocmSmiCSVReadsColumnsByName(t *testing.T) {
+	out := `WARNING: AMD GPU device(s) is/are in a low-power state. Check power control/runtime_status
+
+device,Temperature (Sensor edge) (C),Current Socket Graphics Package Power (W),GPU use (%),VRAM Total Memory (B),VRAM Total Used Memory (B),Card Series,Card Model,Card Vendor,Card SKU,Subsystem ID,Device Rev,Node ID,GUID,GFX Version
+card0,54.0,20.358,2,536870912,511442944,AMD Radeon 8060S Graphics,0x1586,Advanced Micro Devices Inc. [AMD/ATI],STRXLGEN,0x1fb3,0xc1,1,64042,gfx1151
+card1,40.0,100.0,97,17163091968,8581545984,AMD Radeon RX 9070 XT,0x7550,Advanced Micro Devices Inc. [AMD/ATI],X,0x1,0xc0,2,1,gfx1201
+`
+	devices := parseRocmSmiCSV(out)
+	if len(devices) != 2 {
+		t.Fatalf("got %d devices, want 2: %+v", len(devices), devices)
+	}
+	d := devices[0]
+	if d.Name != "AMD Radeon 8060S Graphics" || d.Utilization != 2 || d.Temperature != 54 || d.PowerDraw != 20 ||
+		d.VRAMTotal != 512 || d.VRAMUsed != 487 || d.PowerLimit != 0 {
+		t.Errorf("card0 = %+v", d)
+	}
+	if devices[1].Index != 1 || devices[1].Utilization != 97 || devices[1].VRAMTotal != 16368 || devices[1].VRAMUsed != 8184 {
+		t.Errorf("card1 = %+v", devices[1])
+	}
+	if parseRocmSmiCSV("WARNING only") != nil {
+		t.Error("expected nil without a table")
 	}
 }

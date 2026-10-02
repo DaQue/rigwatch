@@ -1,6 +1,7 @@
 package gpu
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -39,6 +40,21 @@ func (p AMDProvider) Query(runCmd base.RunCmdFunc) ([]base.Device, error) {
 	return p.querySysfs(runCmd)
 }
 
+// amdSmiInt decodes a numeric field from amd-smi's JSON, which reports "N/A"
+// (a string) for sensors a card lacks. A plain int would fail the whole
+// document on one such field and blank every GPU, so unreadable values read 0.
+type amdSmiInt int
+
+func (v *amdSmiInt) UnmarshalJSON(data []byte) error {
+	var f float64
+	if err := json.Unmarshal(data, &f); err != nil {
+		*v = 0
+		return nil
+	}
+	*v = amdSmiInt(f)
+	return nil
+}
+
 func (p AMDProvider) queryModern(runCmd base.RunCmdFunc) ([]base.Device, error) {
 	staticOutput, err := runCmd("amd-smi static --json 2>/dev/null")
 	if err != nil {
@@ -70,25 +86,25 @@ func (p AMDProvider) queryModern(runCmd base.RunCmdFunc) ([]base.Device, error) 
 			GPU   int `json:"gpu"`
 			Usage struct {
 				GFXActivity struct {
-					Value int `json:"value"`
+					Value amdSmiInt `json:"value"`
 				} `json:"gfx_activity"`
 			} `json:"usage"`
 			Power struct {
 				SocketPower struct {
-					Value int `json:"value"`
+					Value amdSmiInt `json:"value"`
 				} `json:"socket_power"`
 			} `json:"power"`
 			Temperature struct {
 				Hotspot struct {
-					Value int `json:"value"`
+					Value amdSmiInt `json:"value"`
 				} `json:"hotspot"`
 			} `json:"temperature"`
 			MemUsage struct {
 				TotalVRAM struct {
-					Value int `json:"value"`
+					Value amdSmiInt `json:"value"`
 				} `json:"total_vram"`
 				UsedVRAM struct {
-					Value int `json:"value"`
+					Value amdSmiInt `json:"value"`
 				} `json:"used_vram"`
 			} `json:"mem_usage"`
 		} `json:"gpu_data"`
@@ -112,12 +128,11 @@ func (p AMDProvider) queryModern(runCmd base.RunCmdFunc) ([]base.Device, error) 
 		device := base.Device{
 			Index:       static.GPU,
 			Name:        static.ASIC.MarketName,
-			VRAMTotal:   metrics.MemUsage.TotalVRAM.Value,
-			VRAMUsed:    metrics.MemUsage.UsedVRAM.Value,
-			Utilization: metrics.Usage.GFXActivity.Value,
-			PowerDraw:   metrics.Power.SocketPower.Value,
-			PowerLimit:  700, // AMD doesn't always report this, conservative estimate
-			Temperature: metrics.Temperature.Hotspot.Value,
+			VRAMTotal:   int(metrics.MemUsage.TotalVRAM.Value),
+			VRAMUsed:    int(metrics.MemUsage.UsedVRAM.Value),
+			Utilization: int(metrics.Usage.GFXActivity.Value),
+			PowerDraw:   int(metrics.Power.SocketPower.Value),
+			Temperature: int(metrics.Temperature.Hotspot.Value),
 			Vendor:      "amd",
 		}
 		devices = append(devices, device)
@@ -131,77 +146,106 @@ func (p AMDProvider) queryLegacy(runCmd base.RunCmdFunc) ([]base.Device, error) 
 	if err != nil {
 		return nil, err
 	}
+	devices := parseRocmSmiCSV(output)
+	if len(devices) == 0 {
+		return nil, fmt.Errorf("no GPUs in rocm-smi output")
+	}
+	return devices, nil
+}
+
+// parseRocmSmiCSV reads rocm-smi's --csv report by column name. The column set
+// and order vary between ROCm releases, and the tool prints human-readable
+// warnings ("AMD GPU device(s) is/are in a low-power state...") to stdout ahead
+// of the table, so neither a fixed position nor "first line is the header" holds.
+func parseRocmSmiCSV(output string) []base.Device {
+	lines := strings.Split(output, "\n")
+	start := -1
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "device,") {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		return nil
+	}
+
+	records, err := csv.NewReader(strings.NewReader(strings.Join(lines[start:], "\n"))).ReadAll()
+	if err != nil || len(records) < 2 {
+		// ReadAll fails on ragged rows; re-read tolerantly.
+		r := csv.NewReader(strings.NewReader(strings.Join(lines[start:], "\n")))
+		r.FieldsPerRecord = -1
+		if records, err = r.ReadAll(); err != nil || len(records) < 2 {
+			return nil
+		}
+	}
+
+	// col finds the first header containing every needle (case-insensitive).
+	header := records[0]
+	col := func(needles ...string) int {
+		for i, h := range header {
+			h = strings.ToLower(h)
+			match := true
+			for _, n := range needles {
+				if !strings.Contains(h, n) {
+					match = false
+					break
+				}
+			}
+			if match {
+				return i
+			}
+		}
+		return -1
+	}
+	cell := func(row []string, i int) (float64, bool) {
+		if i < 0 || i >= len(row) {
+			return 0, false
+		}
+		v, err := strconv.ParseFloat(strings.TrimSpace(row[i]), 64)
+		return v, err == nil
+	}
+
+	tempCol := col("temperature", "junction")
+	if tempCol < 0 {
+		tempCol = col("temperature")
+	}
+	powerCol := col("power (w)")
+	useCol := col("gpu use")
+	totalCol := col("vram total memory (b)")
+	usedCol := col("vram total used memory (b)")
+	nameCol := col("card series")
 
 	var devices []base.Device
-	lines := strings.Split(strings.TrimSpace(output), "\n")
-
-	if len(lines) < 2 {
-		return nil, fmt.Errorf("insufficient output from rocm-smi")
-	}
-
-	for i, line := range lines[1:] {
-		if line == "" {
+	for n, row := range records[1:] {
+		if len(row) == 0 || !strings.HasPrefix(row[0], "card") {
 			continue
 		}
-
-		parts := strings.Split(line, ",")
-		if len(parts) < 7 {
-			continue
+		device := base.Device{Index: n, Vendor: "amd", Name: "AMD GPU"}
+		if idx, err := strconv.Atoi(strings.TrimPrefix(row[0], "card")); err == nil {
+			device.Index = idx
 		}
-
-		device := base.Device{
-			Index:  i,
-			Vendor: "amd",
+		if nameCol >= 0 && nameCol < len(row) && strings.TrimSpace(row[nameCol]) != "" {
+			device.Name = strings.TrimSpace(row[nameCol])
 		}
-
-		if val, err := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64); err == nil {
-			device.Temperature = int(val)
+		if v, ok := cell(row, tempCol); ok {
+			device.Temperature = int(v + 0.5)
 		}
-
-		if val, err := strconv.ParseFloat(strings.TrimSpace(parts[3]), 64); err == nil {
-			device.PowerDraw = int(val)
+		if v, ok := cell(row, powerCol); ok {
+			device.PowerDraw = int(v + 0.5)
 		}
-
-		if val, err := strconv.Atoi(strings.TrimSpace(parts[4])); err == nil {
-			device.Utilization = val
+		if v, ok := cell(row, useCol); ok {
+			device.Utilization = int(v + 0.5)
 		}
-
-		if val, err := strconv.Atoi(strings.TrimSpace(parts[6])); err == nil {
-			memOutput, err := runCmd(fmt.Sprintf("rocm-smi -d %d --showmeminfo vram --csv 2>/dev/null | grep -i 'Total VRAM'", i))
-			if err == nil {
-				memParts := strings.Split(memOutput, ",")
-				if len(memParts) >= 2 {
-					vramStr := strings.TrimSpace(memParts[1])
-					vramStr = strings.TrimSuffix(vramStr, " MB")
-					if totalVRAM, err := strconv.Atoi(strings.TrimSpace(vramStr)); err == nil {
-						device.VRAMTotal = totalVRAM
-						device.VRAMUsed = (totalVRAM * val) / 100
-					}
-				}
-			}
+		if v, ok := cell(row, totalCol); ok {
+			device.VRAMTotal = int(v / 1048576) // bytes → MB
 		}
-
-		if len(parts) >= 12 {
-			series := strings.TrimSpace(parts[10])
-			model := strings.TrimSpace(parts[11])
-			if series != "" {
-				device.Name = series
-				if model != "" && model != series {
-					device.Name = fmt.Sprintf("%s (%s)", series, model)
-				}
-			}
+		if v, ok := cell(row, usedCol); ok {
+			device.VRAMUsed = int(v / 1048576)
 		}
-
-		if device.Name == "" {
-			device.Name = "AMD GPU"
-		}
-
-		device.PowerLimit = 300 // Conservative estimate for legacy AMD GPUs
-
 		devices = append(devices, device)
 	}
-
-	return devices, nil
+	return devices
 }
 
 // -- sysfs fallback, for hosts running amdgpu with no vendor tooling installed --
@@ -219,7 +263,7 @@ const discreteVRAMFloorMB = 1024
 // each attribute separately costs an SSH exec apiece — around thirty per poll on
 // a two-card rig, every refresh interval — and this is the same grep -H idiom
 // the temperature and fan collectors already use to sweep hwmon.
-const DRMProbeCommand = "grep -H . " +
+const DRMProbeCommand = "sh -c 'grep -H . " +
 	"/sys/class/drm/card*/device/vendor " +
 	"/sys/class/drm/card*/device/uevent " +
 	"/sys/class/drm/card*/device/gpu_busy_percent " +
@@ -229,7 +273,7 @@ const DRMProbeCommand = "grep -H . " +
 	"/sys/class/drm/card*/device/hwmon/hwmon*/temp2_input " +
 	"/sys/class/drm/card*/device/hwmon/hwmon*/power1_average " +
 	"/sys/class/drm/card*/device/hwmon/hwmon*/power1_cap " +
-	"2>/dev/null || true"
+	"2>/dev/null || true'"
 
 // drmCardPattern pulls the card number out of a /sys/class/drm path so readings
 // from a card's hwmon subdirectory group with the card's own attributes.
@@ -278,9 +322,8 @@ func (p AMDProvider) querySysfs(runCmd base.RunCmdFunc) ([]base.Device, error) {
 			Temperature: temp / 1000,                              // m°C → °C
 			Vendor:      "amd",
 		}
-		if device.PowerLimit == 0 {
-			device.PowerLimit = 700 // amdgpu does not always expose a cap
-		}
+		// No cap in sysfs leaves PowerLimit at 0, which the UI treats as unknown
+		// and hides the power bar rather than draw it against an invented limit.
 		devices = append(devices, device)
 	}
 	return devices, nil

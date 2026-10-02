@@ -504,6 +504,7 @@ func isAllowedCommand(cmd string) bool {
 	allowedPrefixes := []string{
 		"lscpu ",
 		"top -",
+		"env LC_ALL=C top -",
 		"which ",
 		"nvidia-smi ",
 		"amd-smi ",

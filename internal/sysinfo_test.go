@@ -1,6 +1,9 @@
 package internal
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseTopCPUUsageParsesAggregateAndCores(t *testing.T) {
 	output := `%Cpu(s):  12.5 us,  2.5 sy,  0.0 ni,  85.0 id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st
@@ -257,5 +260,106 @@ func TestAllowlistCoversExtendedSensorCommands(t *testing.T) {
 		if !isAllowedCommand(c) {
 			t.Errorf("command issued by sysinfo.go is not allowlisted: %q", c)
 		}
+	}
+}
+
+func TestParseTopCPUUsageKeepsOnlyLastIteration(t *testing.T) {
+	// top -bn2 prints the since-boot sample first, then the live one.
+	perCore := `%Cpu0  : 90.0 us,  0.0 sy,  0.0 ni, 10.0 id
+%Cpu1  : 80.0 us,  0.0 sy,  0.0 ni, 20.0 id
+%Cpu0  :  4.0 us,  1.0 sy,  0.0 ni, 95.0 id
+%Cpu1  :  0.0 us,  0.0 sy,  0.0 ni, 100.0 id`
+	aggregate, cores := parseTopCPUUsage(perCore)
+	if len(cores) != 2 || cores[0].UsagePercent != 5.0 || cores[1].UsagePercent != 0 {
+		t.Fatalf("cores = %#v, want last iteration only", cores)
+	}
+	if aggregate != 2.5 {
+		t.Fatalf("aggregate = %.1f, want 2.5", aggregate)
+	}
+
+	withSummary := `%Cpu(s): 50.0 us,  0.0 sy,  0.0 ni, 50.0 id
+%Cpu0  : 50.0 us,  0.0 sy,  0.0 ni, 50.0 id
+%Cpu(s):  3.0 us,  0.0 sy,  0.0 ni, 97.0 id
+%Cpu0  :  3.0 us,  0.0 sy,  0.0 ni, 97.0 id`
+	aggregate, cores = parseTopCPUUsage(withSummary)
+	if aggregate != 3.0 || len(cores) != 1 {
+		t.Fatalf("aggregate=%.1f cores=%#v, want 3.0 and one core", aggregate, cores)
+	}
+
+	busybox := "CPU: 90.0% usr 0.0% sys 0.0% nic 10.0% idle\nCPU:  1.0% usr 0.0% sys 0.0% nic 99.0% idle"
+	if aggregate, _ = parseTopCPUUsage(busybox); aggregate != 1.0 {
+		t.Fatalf("busybox aggregate = %.1f, want 1.0", aggregate)
+	}
+}
+
+func TestParseDiskStatsSkipsPartitionsAndStackedDevices(t *testing.T) {
+	output := `   8       0 sda 100 0 200 50 80 0 400 30 0 0
+   8       1 sda1 100 0 200 50 80 0 400 30 0 0
+ 259       0 nvme0n1 100 0 800 50 80 0 900 30 0 0
+ 259       1 nvme0n1p1 100 0 800 50 80 0 900 30 0 0
+ 259       2 nvme0n1p2 1 0 2 0 3 0 4 0 0 0
+ 179       0 mmcblk0 1 0 2 0 3 0 4 0 0 0
+ 179       1 mmcblk0p1 1 0 2 0 3 0 4 0 0 0
+ 253       0 dm-0 1 0 2 0 3 0 4 0 0 0
+   9       0 md0 1 0 2 0 3 0 4 0 0 0`
+	var names []string
+	for _, d := range parseDiskStats(output) {
+		names = append(names, d.Device)
+	}
+	if got := strings.Join(names, ","); got != "sda,nvme0n1,mmcblk0" {
+		t.Fatalf("devices = %s, want sda,nvme0n1,mmcblk0", got)
+	}
+}
+
+func TestParseDFDedupesDevicesAndSkipsLoop(t *testing.T) {
+	output := `/dev/nvme0n1p2  900G  400G  500G  45% /home
+/dev/nvme0n1p2  900G  400G  500G  45% /
+/dev/loop3       56M   56M     0 100% /snap/core/123
+/dev/sdb1       1.8T  1.0T  700G  60% /mnt/my disk`
+	got := parseDF(output)
+	if len(got) != 2 {
+		t.Fatalf("got %d disks, want 2: %+v", len(got), got)
+	}
+	if got[0].MountPoint != "/" {
+		t.Fatalf("mount = %q, want shortest mount /", got[0].MountPoint)
+	}
+	if got[1].MountPoint != "/mnt/my disk" {
+		t.Fatalf("mount = %q, want mount with space preserved", got[1].MountPoint)
+	}
+}
+
+func TestParseThermalZonesNumbersRepeatedNames(t *testing.T) {
+	output := `/sys/class/thermal/thermal_zone0/type:acpitz
+/sys/class/thermal/thermal_zone0/temp:56000
+/sys/class/thermal/thermal_zone1/type:acpitz
+/sys/class/thermal/thermal_zone1/temp:77000`
+	got := parseThermalZones(output)
+	if len(got) != 2 || got[0].Name != "acpitz" || got[1].Name != "acpitz 2" {
+		t.Fatalf("zones = %+v, want acpitz and acpitz 2", got)
+	}
+}
+
+func TestParseTopTableReadsColumnsByName(t *testing.T) {
+	output := `top - 22:58:34 up 2 days,  3 users,  load average: 5.49, 4.10, 2.97
+Tasks: 4893 total,   2 running
+%Cpu0  :  4.0 us,  1.0 sy,  0.0 ni, 95.0 id
+MiB Mem :  63425.0 total
+
+    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+2263884 allie     20   0   10.1g   3.2g  120000 S 193.3   5.2  10:11.12 Jarvis
+ 102146 allie     20   0    1.1g   1.0g   90000 S  32.8   1.2   1:00.00 Web Content
+      1 root      20   0   20000   9000    7000 S   0.0   0.0   0:03.00 systemd`
+	got := parseTopTable(output, 2)
+	if len(got) != 2 {
+		t.Fatalf("got %d rows, want 2 (limit): %+v", len(got), got)
+	}
+	if got[0].PID != 2263884 || got[0].CPUPercent != 193.3 || got[0].MemPercent != 5.2 || got[0].Command != "Jarvis" {
+		t.Fatalf("row 0 = %+v", got[0])
+	}
+	if got[1].Command != "Web Content" {
+		t.Fatalf("command = %q, want multi-word command kept", got[1].Command)
+	}
+	if parseTopTable("no table here", 5) != nil {
+		t.Fatal("expected nil without a PID header")
 	}
 }
