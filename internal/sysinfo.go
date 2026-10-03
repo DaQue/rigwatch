@@ -500,12 +500,27 @@ func getDiskInfo(client *SSHClient) ([]DiskInfo, error) {
 // appears several times (btrfs subvolumes, bind mounts) with identical usage, so
 // each device is reported once under its shortest mount point. Loop devices —
 // snap/appimage squashfs mounts that are always 100% full — are noise.
+// containerInjectedMount reports whether mountPoint is one of the files Docker
+// bind-mounts into every container. df reports their backing host device, so
+// left in they show up as phantom disks, and the shortest-mount-point dedupe
+// would prefer them over "/".
+func containerInjectedMount(mountPoint string) bool {
+	switch mountPoint {
+	case "/etc/hostname", "/etc/hosts", "/etc/resolv.conf", "/etc/hostid":
+		return true
+	}
+	return false
+}
+
 func parseDF(output string) []DiskInfo {
 	var disks []DiskInfo
 	byDevice := map[string]int{}
 	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
 		parts := strings.Fields(line)
 		if len(parts) < 6 || strings.HasPrefix(parts[0], "/dev/loop") {
+			continue
+		}
+		if containerInjectedMount(strings.Join(parts[5:], " ")) {
 			continue
 		}
 		totalKiB, err1 := strconv.ParseUint(parts[1], 10, 64)
@@ -524,13 +539,6 @@ func parseDF(output string) []DiskInfo {
 			TotalBytes:   totalKiB * 1024,
 			UsedBytes:    usedKiB * 1024,
 		}
-		// Docker injects /etc/hostname, /etc/hosts and /etc/resolv.conf as bind
-		// mounts of host files: df reports them as the backing block device
-		// (e.g. /dev/nvme0n1p4) with a bogus mount point, and the per-device
-		// dedup below would let that row stand in for the real filesystem.
-		if containerInjectedMount(disk.MountPoint) {
-			continue
-		}
 		if i, seen := byDevice[disk.Device]; seen {
 			if len(disk.MountPoint) < len(disks[i].MountPoint) {
 				disks[i] = disk
@@ -541,18 +549,6 @@ func parseDF(output string) []DiskInfo {
 		disks = append(disks, disk)
 	}
 	return disks
-}
-
-// containerInjectedMount reports whether a mount point is one of the files
-// Docker always injects into a container. They are bind mounts of host files,
-// so df attributes them to the host's root block device with a mount point that
-// does not describe a real filesystem.
-func containerInjectedMount(mountPoint string) bool {
-	switch mountPoint {
-	case "/etc/hostname", "/etc/hosts", "/etc/resolv.conf", "/etc/hostid":
-		return true
-	}
-	return false
 }
 
 // humanKiB formats a size like `df -h`: binary units, one decimal below 10 and
@@ -626,6 +622,33 @@ func getHwmonCPUTemp(client *SSHClient) ([]TemperatureInfo, error) {
 	return temps, nil
 }
 
+// cpuTempRank scores an hwmon label as a CPU temperature source; lower wins.
+const (
+	cpuTempDie   = iota // die/package sensor: k10temp, coretemp
+	cpuTempOther        // some other CPU-named channel
+	cpuTempBoard        // super-I/O channel (CPUTIN, PCH_*): a last resort
+	cpuTempNone         // not a CPU sensor
+)
+
+func cpuTempRank(label string) int {
+	switch {
+	case label == "tctl" || label == "tdie" || strings.HasPrefix(label, "tccd") ||
+		strings.HasPrefix(label, "core ") || strings.HasPrefix(label, "package") ||
+		label == "physical id 0":
+		return cpuTempDie
+	case strings.Contains(label, "pch") || strings.HasSuffix(label, "tin"):
+		// Socket thermistors and chipset channels are not the die, and a PCH
+		// "CPU" channel is often unwired and reads 0.
+		if strings.Contains(label, "cpu") {
+			return cpuTempBoard
+		}
+		return cpuTempNone
+	case strings.Contains(label, "cpu"):
+		return cpuTempOther
+	}
+	return cpuTempNone
+}
+
 func parseHwmonTemps(output string) []TemperatureInfo {
 	type sensorData struct {
 		label   string
@@ -675,59 +698,33 @@ func parseHwmonTemps(output string) []TemperatureInfo {
 		sensors[key] = data
 	}
 
-	// Iterate sensor keys in order so the chosen CPU temp is deterministic
-	// (e.g. temp1 "Package id 0" before temp2 "Core 0"), not map-order dependent.
+	// Iterate sensor keys in order so ties are deterministic (e.g. temp1
+	// "Package id 0" before temp2 "Core 0"), not map-order dependent.
 	keys := make([]string, 0, len(sensors))
 	for key := range sensors {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 
-	var temps []TemperatureInfo
-	// Pick the most credible CPU die sensor rather than the first label that
-	// happens to mention "cpu". Super-I/O chips (nct6799, it87, …) publish
-	// board channels whose labels look CPU-ish — "CPUTIN", "PCH_CPU_TEMP",
-	// "PCH_CHIP_CPU_MAX_TEMP" — and unwired channels read 0, which is how a
-	// healthy k10temp (Tctl) gets masked by a 0 °C reading.
-	bestRank, best := 2, ""
+	// Take the best CPU sensor across the whole tree rather than the first
+	// substring hit: sensor keys sort lexicographically, so a super-I/O chip's
+	// channels (hwmon10) are visited before the CPU die sensor (hwmon3).
+	bestRank, bestCelsius := cpuTempNone, 0.0
 	for _, key := range keys {
 		data := sensors[key]
+		// A live CPU never reads 0 °C; that is an unwired board channel.
 		if !data.hasTemp || data.celsius <= 0 {
-			continue // a CPU die never reports 0 °C
+			continue
 		}
-		rank := hwmonCPURank(data.label)
-		if rank < 0 || rank >= bestRank {
-			continue // ties keep the earlier key: order stays deterministic
+		if rank := cpuTempRank(strings.ToLower(data.label)); rank < bestRank {
+			bestRank, bestCelsius = rank, data.celsius
 		}
-		bestRank, best = rank, key
 	}
-	if best == "" {
-		return nil
+	var temps []TemperatureInfo
+	if bestRank != cpuTempNone {
+		temps = append(temps, TemperatureInfo{Name: "CPU", Celsius: bestCelsius})
 	}
-	temps = append(temps, TemperatureInfo{Name: "CPU", Celsius: sensors[best].celsius})
 	return temps
-}
-
-// hwmonCPURank scores a hwmon label by how likely it is the real CPU die
-// temperature: 0 = CPU package/die sensor (k10temp, coretemp), 1 = other
-// CPU-ish label, -1 = not a CPU temperature at all.
-func hwmonCPURank(label string) int {
-	label = strings.ToLower(strings.TrimSpace(label))
-	switch {
-	case label == "":
-		return -1
-	case strings.Contains(label, "pch"), strings.HasSuffix(label, "tin"):
-		// PCH_CPU_TEMP / PCH_CHIP_CPU_MAX_TEMP / CPUTIN / SYSTIN / AUXTIN are
-		// super-I/O board channels, not the CPU die.
-		return -1
-	case label == "tctl", label == "tdie", label == "package id 0", label == "physical id 0":
-		return 0
-	case strings.HasPrefix(label, "tccd"), strings.HasPrefix(label, "core "):
-		return 0
-	case label == "cpu", strings.Contains(label, "package"), strings.Contains(label, "cpu"):
-		return 1
-	}
-	return -1
 }
 
 func parseThermalZones(output string) []TemperatureInfo {

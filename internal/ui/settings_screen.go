@@ -40,6 +40,7 @@ type settingsFormState struct {
 	themeIdx    int
 	headlineIdx int
 	calm        bool
+	styleIdx    int
 	focus       int
 	status      string
 	statusErr   bool
@@ -56,7 +57,7 @@ func numericInput(value string) textinput.Model {
 
 // settingsCyclerRows is how many leading focus stops are ←/→ cyclers rather than
 // text inputs: the theme picker, the headline picker and the calm-mode switch.
-const settingsCyclerRows = 3
+const settingsCyclerRows = 4
 
 // focusCount is the number of focus stops: the cyclers + interval + 2 per metric.
 func (s *settingsFormState) focusCount() int { return settingsCyclerRows + len(s.inputs) }
@@ -109,7 +110,15 @@ func (m *Model) openSettings() {
 		}
 	}
 
-	m.settingsForm = &settingsFormState{inputs: inputs, themeIdx: themeIdx, headlineIdx: headlineIdx, calm: m.settings.CalmMode, focus: 0}
+	styleIdx := 0
+	for i, name := range StyleNames() {
+		if name == m.settings.Style {
+			styleIdx = i
+			break
+		}
+	}
+
+	m.settingsForm = &settingsFormState{inputs: inputs, themeIdx: themeIdx, headlineIdx: headlineIdx, calm: m.settings.CalmMode, styleIdx: styleIdx, focus: 0}
 	m.screen = ScreenSettings
 	m.setSettingsFocus(0)
 }
@@ -164,6 +173,9 @@ func (m Model) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case 2:
 			s.calm = !s.calm
 			return m, nil
+		case 3:
+			s.styleIdx = (s.styleIdx - 1 + len(StyleNames())) % len(StyleNames())
+			return m, nil
 		}
 	case "right":
 		switch s.focus {
@@ -175,6 +187,9 @@ func (m Model) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case 2:
 			s.calm = !s.calm
+			return m, nil
+		case 3:
+			s.styleIdx = (s.styleIdx + 1) % len(StyleNames())
 			return m, nil
 		}
 	}
@@ -214,6 +229,7 @@ func (m Model) saveSettingsForm() (tea.Model, tea.Cmd) {
 	newSettings := Settings{
 		Interval:                 interval,
 		DefaultTheme:             ThemeNames()[s.themeIdx],
+		Style:                    StyleNames()[s.styleIdx],
 		Thresholds:               thresholds,
 		HeadlineMode:             HeadlineModes()[s.headlineIdx],
 		CalmMode:                 s.calm,
@@ -294,7 +310,13 @@ func (m Model) renderSettingsScreen() string {
 	b.WriteString(mutedStyle.Render("  dim healthy hosts (z toggles)"))
 	b.WriteString("\n")
 
-	// Interval row (focus 3 / inputs[0]).
+	// Style row (focus 3).
+	b.WriteString(label("Style", s.focus == 3))
+	b.WriteString(accentStyle.Render("‹ " + StyleNames()[s.styleIdx] + " ›"))
+	b.WriteString(mutedStyle.Render("  " + BuiltInStyles()[s.styleIdx].Blurb + " (y cycles)"))
+	b.WriteString("\n")
+
+	// Interval row (focus 4 / inputs[0]).
 	b.WriteString(label("Refresh interval", s.focus == settingsCyclerRows))
 	b.WriteString(s.inputs[0].View())
 	b.WriteString(mutedStyle.Render(" sec (blank = default)"))

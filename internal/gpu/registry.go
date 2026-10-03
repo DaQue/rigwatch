@@ -7,6 +7,7 @@ import "github.com/allisonhere/rigwatch/internal/gpu/base"
 var providers = []base.Provider{
 	NvidiaProvider{},
 	AMDProvider{},
+	PCIProvider{},
 }
 
 // QueryAll detects and queries all registered GPU providers.

@@ -189,42 +189,6 @@ func TestParseHwmonTempsReturnsEmptyWhenNoCPUSensor(t *testing.T) {
 	}
 }
 
-// Real G760 layout: the Nuvoton nct6799 (hwmon10) publishes CPU-ish board
-// channels that read 0, while k10temp (hwmon3) carries the real Tctl. The
-// parser must prefer the die sensor and never report 0 °C.
-func TestParseHwmonTempsPrefersCPUDieOverSuperIOChannels(t *testing.T) {
-	output := `/sys/class/hwmon/hwmon3/temp1_label:Tctl
-/sys/class/hwmon/hwmon3/temp1_input:44125
-/sys/class/hwmon/hwmon10/temp1_label:SYSTIN
-/sys/class/hwmon/hwmon10/temp1_input:34000
-/sys/class/hwmon/hwmon10/temp2_label:CPUTIN
-/sys/class/hwmon/hwmon10/temp2_input:34000
-/sys/class/hwmon/hwmon10/temp10_label:PCH_CHIP_CPU_MAX_TEMP
-/sys/class/hwmon/hwmon10/temp10_input:0
-/sys/class/hwmon/hwmon10/temp12_label:PCH_CPU_TEMP
-/sys/class/hwmon/hwmon10/temp12_input:0`
-
-	got := parseHwmonTemps(output)
-	if len(got) != 1 {
-		t.Fatalf("hwmon temps = %#v, want exactly 1 CPU temp", got)
-	}
-	if got[0].Name != "CPU" || got[0].Celsius != 44.125 {
-		t.Fatalf("hwmon temp = %#v, want CPU 44.125C (k10temp Tctl)", got[0])
-	}
-}
-
-// A lone zero reading must not be reported as a CPU temperature: super-I/O
-// channels read 0 when unwired, and 0 °C would look like a healthy idle CPU.
-func TestParseHwmonTempsRejectsZeroReading(t *testing.T) {
-	output := `/sys/class/hwmon/hwmon10/temp10_label:PCH_CHIP_CPU_MAX_TEMP
-/sys/class/hwmon/hwmon10/temp10_input:0`
-
-	got := parseHwmonTemps(output)
-	if len(got) != 0 {
-		t.Fatalf("hwmon temps = %#v, want empty (0 °C is not a reading)", got)
-	}
-}
-
 func TestParseLoadAvgParsesAllFields(t *testing.T) {
 	got := parseLoadAvg("0.52 0.58 0.59 2/523 12345\n")
 	if got.Load1 != 0.52 || got.Load5 != 0.58 || got.Load15 != 0.59 {
@@ -364,23 +328,6 @@ func TestParseDFDedupesDevicesAndSkipsLoop(t *testing.T) {
 	}
 }
 
-// Inside the container, df attributes Docker's file bind mounts to the host's
-// root device; those rows must not stand in for a real filesystem.
-func TestParseDFSkipsContainerInjectedMounts(t *testing.T) {
-	output := `/dev/nvme0n1p4  1485352160 747587840 675465984  53% /etc/hostname
-/dev/nvme0n1p4  1485352160 747587840 675465984  53% /etc/hosts
-/dev/nvme0n1p4  1485352160 747587840 675465984  53% /etc/resolv.conf
-/dev/nvme0n1p2   502806528 320000000 182806528  64% /root/.ssh`
-
-	got := parseDF(output)
-	if len(got) != 1 {
-		t.Fatalf("got %d disks, want 1: %+v", len(got), got)
-	}
-	if got[0].Device != "/dev/nvme0n1p2" || got[0].MountPoint != "/root/.ssh" {
-		t.Fatalf("disk = %+v, want /dev/nvme0n1p2 at /root/.ssh", got[0])
-	}
-}
-
 func TestHumanKiBMatchesDfStyle(t *testing.T) {
 	cases := map[uint64]string{0: "0K", 500: "500K", 1024: "1.0M", 297000: "291M", 2097152: "2.0G", 998244352: "952G", 1572864: "1.5G"}
 	for in, want := range cases {
@@ -440,5 +387,56 @@ func TestDropGenericACPIZonesKeepsRealSensors(t *testing.T) {
 	got := dropGenericACPIZones([]TemperatureInfo{{Name: "acpitz"}, {Name: "acpitz 2"}, {Name: "iwlwifi"}})
 	if len(got) != 1 || got[0].Name != "iwlwifi" {
 		t.Fatalf("got %+v, want only iwlwifi", got)
+	}
+}
+
+func TestParseHwmonTempsPrefersCPUDieOverSuperIOChannels(t *testing.T) {
+	// hwmon10 sorts before hwmon3, so a first-match scan hits the super-I/O
+	// chip's CPU-named channels before the k10temp die sensor.
+	output := `/sys/class/hwmon/hwmon3/name:k10temp
+/sys/class/hwmon/hwmon3/temp1_label:Tctl
+/sys/class/hwmon/hwmon3/temp1_input:43625
+/sys/class/hwmon/hwmon10/name:nct6799
+/sys/class/hwmon/hwmon10/temp1_label:SYSTIN
+/sys/class/hwmon/hwmon10/temp1_input:31000
+/sys/class/hwmon/hwmon10/temp2_label:CPUTIN
+/sys/class/hwmon/hwmon10/temp2_input:34000
+/sys/class/hwmon/hwmon10/temp10_label:PCH_CHIP_CPU_MAX_TEMP
+/sys/class/hwmon/hwmon10/temp10_input:0
+/sys/class/hwmon/hwmon10/temp12_label:PCH_CPU_TEMP
+/sys/class/hwmon/hwmon10/temp12_input:0`
+
+	got := parseHwmonTemps(output)
+	if len(got) != 1 || got[0].Celsius != 43.625 {
+		t.Fatalf("hwmon temps = %#v, want CPU 43.625 (Tctl)", got)
+	}
+}
+
+func TestParseHwmonTempsRejectsZeroReading(t *testing.T) {
+	output := `/sys/class/hwmon/hwmon1/name:nct6799
+/sys/class/hwmon/hwmon1/temp10_label:PCH_CHIP_CPU_MAX_TEMP
+/sys/class/hwmon/hwmon1/temp10_input:0`
+	if got := parseHwmonTemps(output); len(got) != 0 {
+		t.Fatalf("hwmon temps = %#v, want none for a 0 °C channel", got)
+	}
+}
+
+func TestParseHwmonTempsFallsBackToBoardCPUChannel(t *testing.T) {
+	output := `/sys/class/hwmon/hwmon1/name:nct6799
+/sys/class/hwmon/hwmon1/temp2_label:CPUTIN
+/sys/class/hwmon/hwmon1/temp2_input:34000`
+	if got := parseHwmonTemps(output); len(got) != 1 || got[0].Celsius != 34 {
+		t.Fatalf("hwmon temps = %#v, want CPUTIN as a last resort", got)
+	}
+}
+
+func TestParseDFSkipsContainerInjectedMounts(t *testing.T) {
+	output := `overlay          512000000  148897792  360321024  29% /
+/dev/nvme0n1p4  1395864371  206158430 1181116006  15% /etc/hostname
+/dev/nvme0n1p4  1395864371  206158430 1181116006  15% /etc/hosts
+/dev/nvme0n1p4  1395864371  206158430 1181116006  15% /etc/resolv.conf`
+	got := parseDF(output)
+	if len(got) != 1 || got[0].Device != "overlay" || got[0].MountPoint != "/" {
+		t.Fatalf("disks = %+v, want only overlay on /", got)
 	}
 }

@@ -33,9 +33,12 @@ type Thresholds struct {
 type Settings struct {
 	// Interval is the metric refresh interval in seconds. <= 0 means "unset"
 	// and the built-in default is used.
-	Interval     float64    `json:"interval"`
-	DefaultTheme string     `json:"default_theme"`
-	Thresholds   Thresholds `json:"thresholds"`
+	Interval     float64 `json:"interval"`
+	DefaultTheme string  `json:"default_theme"`
+	// Style is the look (classic, drift, ...), independent of the color theme.
+	// Cycled with y, or in settings.
+	Style      string     `json:"style"`
+	Thresholds Thresholds `json:"thresholds"`
 	// HeadlineMode sizes the big alert reading at the top of each host tile:
 	// HeadlineLarge, HeadlineCompact or HeadlineOff. Empty or unrecognized
 	// normalizes to HeadlineLarge.
@@ -150,6 +153,7 @@ func (s *Settings) normalize() {
 	} else {
 		s.DefaultTheme = ThemeByName(s.DefaultTheme).Name
 	}
+	s.Style = StyleByName(s.Style).Name
 	switch s.HeadlineMode {
 	case HeadlineLarge, HeadlineCompact, HeadlineOff:
 	default:

@@ -14,7 +14,7 @@ func (m Model) renderUpdateNotification() string {
 	}
 
 	updateStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("226")).
+		Foreground(warningColor).
 		Bold(true)
 
 	currentVer := m.updateInfo.CurrentVersion
@@ -33,6 +33,11 @@ func (m Model) View() string {
 	// render signature.
 	activeThresholds = m.settings.Thresholds
 	activeFrame = m.animationFrame
+	activeStyle = StyleByName(m.settings.Style)
+	activeToast = ""
+	if m.styleToast != "" && m.animationFrame < m.styleToastUntil {
+		activeToast = m.styleToast
+	}
 
 	if m.helpVisible {
 		return m.renderHelp()
