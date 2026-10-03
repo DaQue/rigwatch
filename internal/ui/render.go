@@ -72,7 +72,7 @@ func (m Model) renderSingleHostTile(host internal.SSHHost, indicator string) str
 	if info := m.sysInfos[host.Name]; info != nil && info.Uptime > 0 {
 		uptimeHint = "  •  up " + formatUptime(info.Uptime)
 	}
-	subtitle := fmt.Sprintf("v%s  •  refreshed %s%s  •  interval %s%s  •  s shell  •  c add hosts  •  v modes  •  e timeline  •  z calm  •  ? help  •  q quit",
+	subtitle := fmt.Sprintf("v%s  •  refreshed %s%s  •  interval %s%s  •  s shell  •  c add hosts  •  v modes  •  e timeline  •  z calm  •  y style  •  ? help  •  q quit",
 		internal.ShortVersion(), lastUpdate.Format("15:04:05"), uptimeHint, formatInterval(m.updateInterval), navHint)
 
 	header := renderHeroHeader("RIGWATCH // "+host.Name+indicator, subtitle, m.width, m.animationFrame)
@@ -93,7 +93,7 @@ func (m Model) renderSingleHostTile(host internal.SSHHost, indicator string) str
 func (m Model) renderOverview() string {
 	var b strings.Builder
 
-	subtitle := fmt.Sprintf("v%s  •  refreshed %s  •  interval %s  •  t per-host  •  g grid  •  c add hosts  •  v modes  •  e timeline  •  z calm  •  ? help  •  q quit",
+	subtitle := fmt.Sprintf("v%s  •  refreshed %s  •  interval %s  •  t per-host  •  g grid  •  c add hosts  •  v modes  •  e timeline  •  z calm  •  y style  •  ? help  •  q quit",
 		internal.ShortVersion(), time.Now().Format("15:04:05"), formatInterval(m.updateInterval))
 	b.WriteString(renderHeroHeader(fmt.Sprintf("COMMAND CENTER // %d HOSTS", len(m.selectedHosts)), subtitle, m.width, m.animationFrame))
 	b.WriteString("\n\n")
@@ -187,7 +187,7 @@ func renderDashboardWithHistory(hostName string, info *internal.SystemInfo, hist
 	if multiHost {
 		navHint = "  •  n next  •  t overview  •  g grid"
 	}
-	subtitle := fmt.Sprintf("v%s  •  refreshed %s  •  interval %s%s  •  s shell  •  c add hosts  •  v modes  •  e timeline  •  z calm  •  ? help  •  q quit",
+	subtitle := fmt.Sprintf("v%s  •  refreshed %s  •  interval %s%s  •  s shell  •  c add hosts  •  v modes  •  e timeline  •  z calm  •  y style  •  ? help  •  q quit",
 		internal.ShortVersion(), lastUpdate.Format("15:04:05"), formatInterval(updateInterval), navHint)
 
 	header := renderHeroHeader("RIGWATCH // "+hostName, subtitle, width, frame)
@@ -419,9 +419,13 @@ func renderGPUSummarySectionWithHistory(gpus []internal.GPUInfo, gpuHistory []fl
 	fmt.Fprintf(&b, "%s  %s  vram %.0f%%  %dW  %s\n", mutedStyle.Render(name), utilStr, vramPercent, totalPower, tempStr)
 	b.WriteString(accentStyle.Render("UTIL "))
 	b.WriteString(renderNeonProgressBarSev(avgUtil, barWidth, activeThresholds.GPUPct))
-	b.WriteString("\n")
-	b.WriteString(accentStyle.Render("VRAM "))
-	b.WriteString(renderNeonProgressBar(vramPercent, barWidth))
+	// Integrated and legacy GPUs report no dedicated VRAM; a permanently empty
+	// bar would only read as "0% used".
+	if totalVRAM > 0 {
+		b.WriteString("\n")
+		b.WriteString(accentStyle.Render("VRAM "))
+		b.WriteString(renderNeonProgressBar(vramPercent, barWidth))
+	}
 	// The power-draw bar is shown only in the roomy single-host (extended) view;
 	// the compact grid keeps the GPU panel short so columns stay aligned.
 	if extended && totalPowerLimit > 0 {
@@ -441,7 +445,7 @@ func renderGPUSummarySectionWithHistory(gpus []internal.GPUInfo, gpuHistory []fl
 		b.WriteString("\n")
 		b.WriteString(renderLabeledTrend("HIST ", gpuHistory, barWidth, trendRows(extended), activeThresholds.GPUPct))
 	}
-	if len(vramHistory) > 1 {
+	if len(vramHistory) > 1 && totalVRAM > 0 {
 		b.WriteString("\n")
 		b.WriteString(renderLabeledTrend("VRAM ", vramHistory, barWidth, trendRows(extended), Threshold{}))
 	}

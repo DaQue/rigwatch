@@ -38,6 +38,7 @@ func helpGroups() []helpGroup {
 			{"g", "grid view"},
 			{"e", "event timeline"},
 			{"z", "calm mode (dim healthy hosts)"},
+			{"y", "switch style (classic / drift)"},
 			{"s", "open shell (ssh)"},
 			{"c", "back to host list"},
 		}},
