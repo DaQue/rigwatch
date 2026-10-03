@@ -389,3 +389,54 @@ func TestDropGenericACPIZonesKeepsRealSensors(t *testing.T) {
 		t.Fatalf("got %+v, want only iwlwifi", got)
 	}
 }
+
+func TestParseHwmonTempsPrefersCPUDieOverSuperIOChannels(t *testing.T) {
+	// hwmon10 sorts before hwmon3, so a first-match scan hits the super-I/O
+	// chip's CPU-named channels before the k10temp die sensor.
+	output := `/sys/class/hwmon/hwmon3/name:k10temp
+/sys/class/hwmon/hwmon3/temp1_label:Tctl
+/sys/class/hwmon/hwmon3/temp1_input:43625
+/sys/class/hwmon/hwmon10/name:nct6799
+/sys/class/hwmon/hwmon10/temp1_label:SYSTIN
+/sys/class/hwmon/hwmon10/temp1_input:31000
+/sys/class/hwmon/hwmon10/temp2_label:CPUTIN
+/sys/class/hwmon/hwmon10/temp2_input:34000
+/sys/class/hwmon/hwmon10/temp10_label:PCH_CHIP_CPU_MAX_TEMP
+/sys/class/hwmon/hwmon10/temp10_input:0
+/sys/class/hwmon/hwmon10/temp12_label:PCH_CPU_TEMP
+/sys/class/hwmon/hwmon10/temp12_input:0`
+
+	got := parseHwmonTemps(output)
+	if len(got) != 1 || got[0].Celsius != 43.625 {
+		t.Fatalf("hwmon temps = %#v, want CPU 43.625 (Tctl)", got)
+	}
+}
+
+func TestParseHwmonTempsRejectsZeroReading(t *testing.T) {
+	output := `/sys/class/hwmon/hwmon1/name:nct6799
+/sys/class/hwmon/hwmon1/temp10_label:PCH_CHIP_CPU_MAX_TEMP
+/sys/class/hwmon/hwmon1/temp10_input:0`
+	if got := parseHwmonTemps(output); len(got) != 0 {
+		t.Fatalf("hwmon temps = %#v, want none for a 0 °C channel", got)
+	}
+}
+
+func TestParseHwmonTempsFallsBackToBoardCPUChannel(t *testing.T) {
+	output := `/sys/class/hwmon/hwmon1/name:nct6799
+/sys/class/hwmon/hwmon1/temp2_label:CPUTIN
+/sys/class/hwmon/hwmon1/temp2_input:34000`
+	if got := parseHwmonTemps(output); len(got) != 1 || got[0].Celsius != 34 {
+		t.Fatalf("hwmon temps = %#v, want CPUTIN as a last resort", got)
+	}
+}
+
+func TestParseDFSkipsContainerInjectedMounts(t *testing.T) {
+	output := `overlay          512000000  148897792  360321024  29% /
+/dev/nvme0n1p4  1395864371  206158430 1181116006  15% /etc/hostname
+/dev/nvme0n1p4  1395864371  206158430 1181116006  15% /etc/hosts
+/dev/nvme0n1p4  1395864371  206158430 1181116006  15% /etc/resolv.conf`
+	got := parseDF(output)
+	if len(got) != 1 || got[0].Device != "overlay" || got[0].MountPoint != "/" {
+		t.Fatalf("disks = %+v, want only overlay on /", got)
+	}
+}
