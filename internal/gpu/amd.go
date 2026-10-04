@@ -352,6 +352,22 @@ func amdCards(runCmd base.RunCmdFunc, discreteOnly bool) []drmCard {
 		return nil
 	}
 
+	var cards []drmCard
+	for _, card := range parseDRMCards(out) {
+		if card.attrs["vendor"] != amdPCIVendor {
+			continue
+		}
+		if discreteOnly && card.intAttr("mem_info_vram_total")/1048576 < discreteVRAMFloorMB {
+			continue
+		}
+		cards = append(cards, card)
+	}
+	return cards
+}
+
+// parseDRMCards groups `grep -H` output from a /sys/class/drm probe into one
+// drmCard per card, lowest card number first. It does not filter by vendor.
+func parseDRMCards(out string) []drmCard {
 	byIndex := map[int]*drmCard{}
 	for _, line := range strings.Split(out, "\n") {
 		path, value, ok := strings.Cut(line, ":")
@@ -404,14 +420,7 @@ func amdCards(runCmd base.RunCmdFunc, discreteOnly bool) []drmCard {
 
 	cards := make([]drmCard, 0, len(indexes))
 	for _, index := range indexes {
-		card := byIndex[index]
-		if card.attrs["vendor"] != amdPCIVendor {
-			continue
-		}
-		if discreteOnly && card.intAttr("mem_info_vram_total")/1048576 < discreteVRAMFloorMB {
-			continue
-		}
-		cards = append(cards, *card)
+		cards = append(cards, *byIndex[index])
 	}
 	return cards
 }

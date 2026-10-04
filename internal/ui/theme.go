@@ -51,6 +51,9 @@ func BuiltInThemes() []Theme {
 		makeTheme("nord", "#eceff4", "#81a1c1", "#88c0d0", "#a3be8c", "#ebcb8b", "#bf616a", "#121821", "#2e3440", "#5e81ac", "#b48ead", "#1d2530"),
 		makeTheme("gruvbox-dark", "#ebdbb2", "#928374", "#83a598", "#b8bb26", "#fabd2f", "#fb4934", "#1d2021", "#3c3836", "#d3869b", "#fe8019", "#282828"),
 		makeTheme("solarized-dark", "#eee8d5", "#839496", "#2aa198", "#859900", "#b58900", "#dc322f", "#002b36", "#073642", "#268bd2", "#d33682", "#073642"),
+		// mar: warm paper-dark base, one coral accent, sea-glass for healthy. The
+		// palette the drift style was designed around.
+		makeTheme(marThemeName, "#f3ece2", "#8a8177", "#ff7f6b", "#7fd6b5", "#f0b867", "#ff5c6c", "#14110f", "#2e2823", "#5a4f46", "#f3ece2", "#1d1815"),
 		makeTheme("catppuccin-mocha", "#cdd6f4", "#7f849c", "#89dceb", "#a6e3a1", "#f9e2af", "#f38ba8", "#11111b", "#313244", "#cba6f7", "#f5c2e7", "#1e1e2e"),
 	}
 }

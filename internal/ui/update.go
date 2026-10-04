@@ -217,6 +217,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.openTimeline()
 				return m, nil
 			}
+		case "y":
+			if m.screen == ScreenDashboard || m.screen == ScreenOverview || m.screen == ScreenQuad {
+				m.cycleStyle()
+				return m, nil
+			}
 		case "z":
 			if m.screen == ScreenDashboard || m.screen == ScreenOverview || m.screen == ScreenQuad {
 				m.toggleCalmMode()

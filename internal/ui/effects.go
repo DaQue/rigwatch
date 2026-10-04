@@ -186,6 +186,10 @@ func heatRampPos(value float64, t Threshold) float64 {
 // is always the color that corresponds to the current value — a bar sitting at
 // 30% is green whether it is 8 cells wide or 40.
 func renderValueBar(percent float64, width int, t Threshold, fullGlyph, emptyGlyph string) string {
+	return activeStyle.Bar(percent, width, t, fullGlyph, emptyGlyph)
+}
+
+func classicBar(percent float64, width int, t Threshold, fullGlyph, emptyGlyph string) string {
 	width = clampInt(width, 1, 120)
 	percent = math.Max(0, math.Min(100, percent))
 	filled := clampInt(int(math.Round(float64(width)*percent/100.0)), 0, width)
@@ -434,6 +438,10 @@ func renderPanel(title string, body string, width int) string {
 // The interior is filled with the theme's panel background, which lifts the card
 // off the terminal background instead of leaving everything on one flat plane.
 func renderPanelSev(title string, body string, width int, sev Severity) string {
+	return activeStyle.Panel(title, body, width, sev)
+}
+
+func classicPanel(title string, body string, width int, sev Severity) string {
 	width = max(16, width)
 	innerWidth := width - 2
 
@@ -485,6 +493,10 @@ func renderPanelSev(title string, body string, width int, sev Severity) string {
 }
 
 func renderHeroHeader(title string, subtitle string, width int, frame int) string {
+	return activeStyle.Hero(title, subtitle, width, frame)
+}
+
+func classicHero(title string, subtitle string, width int, frame int) string {
 	width = max(40, width)
 	contentWidth := width - 2
 	var b strings.Builder

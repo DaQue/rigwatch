@@ -45,6 +45,8 @@ type Model struct {
 	sshOnExit         string
 	updateInfo        internal.UpdateInfo
 	animationFrame    int
+	styleToast        string // brief "style: x" confirmation after a switch
+	styleToastUntil   int    // animationFrame at which it expires
 	metricHistories   map[string]metricHistory
 	alertOnsets       map[string]map[string]alertOnset // host -> metric -> when it entered alert
 	alertSamples      map[string]int64                 // host -> monotonic poll counter
